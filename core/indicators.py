@@ -174,3 +174,65 @@ def make_today_bar(row: dict) -> dict:
         "volume": float(row.get("volume", 0) or 0),
         "amount": float(row.get("amount", 0) or 0),
     }
+
+
+# ------------------------------------------------------------------ 图表序列
+def _series(df: pd.DataFrame, name: str, default: float = 0.0) -> pd.Series:
+    if name in df.columns:
+        return pd.to_numeric(df[name], errors="coerce").fillna(default).astype(float)
+    return pd.Series(default, index=df.index, dtype=float)
+
+
+def _nums(values, digits: int = 2):
+    """转成 JSON 友好的数组；NaN/Inf 用 None，前端画断开的线。"""
+    out = []
+    for v in np.asarray(values, dtype=float):
+        out.append(round(float(v), digits) if np.isfinite(v) else None)
+    return out
+
+
+def build_kline_series(df: pd.DataFrame, bands: pd.DataFrame, n_days: int = 90) -> dict:
+    """
+    构建前端日 K 图所需的完整序列（尾部 n_days 根）。
+
+    包含：OHLC、成交量/额、BOLL 三轨、MA5/10/20、VOL MA5、MACD(12,26,9)。
+    所有指标均用「当前及之前」的数据计算，不含未来函数。最后一根是 14:30 的盘中临时 K 线。
+    """
+    s = max(0, len(df) - n_days)
+    tail = df.iloc[s:]
+    btail = bands.iloc[s:]
+    close = _series(df, "close")
+    vol = _series(df, "volume")
+
+    ma5 = close.rolling(5, min_periods=5).mean().iloc[s:]
+    ma10 = close.rolling(10, min_periods=10).mean().iloc[s:]
+    ma20 = close.rolling(20, min_periods=20).mean().iloc[s:]
+    vol_ma5 = vol.rolling(5, min_periods=5).mean().iloc[s:]
+
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    dif = (ema12 - ema26).iloc[s:]
+    dea = (ema12 - ema26).ewm(span=9, adjust=False).mean().iloc[s:]
+    macd = (2 * (dif - dea))
+
+    volume = _series(tail, "volume")
+    amount = _series(tail, "amount")
+    return {
+        "dates": [str(x)[:10] for x in tail["date"].tolist()],
+        "open": _nums(_series(tail, "open")),
+        "high": _nums(_series(tail, "high")),
+        "low": _nums(_series(tail, "low")),
+        "close": _nums(close.iloc[s:]),
+        "volume": [int(round(v)) if np.isfinite(v) else 0 for v in np.asarray(volume, dtype=float)],
+        "amount": [int(round(v)) if np.isfinite(v) else 0 for v in np.asarray(amount, dtype=float)],
+        "upper": _nums(btail["upper"]),
+        "mid": _nums(btail["mid"]),
+        "lower": _nums(btail["lower"]),
+        "ma5": _nums(ma5),
+        "ma10": _nums(ma10),
+        "ma20": _nums(ma20),
+        "vol_ma5": [int(round(v)) if np.isfinite(v) else 0 for v in np.asarray(vol_ma5, dtype=float)],
+        "dif": _nums(dif, 3),
+        "dea": _nums(dea, 3),
+        "macd": _nums(macd, 3),
+    }
