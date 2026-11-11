@@ -1,0 +1,74 @@
+{
+  "run_id": "20261111_175858",
+  "scan_time": "2026-11-11 18:03:06",
+  "market_date": "2026-11-11",
+  "source": "akshare",
+  "is_demo": false,
+  "source_note": "实时行情来自东方财富，历史日线为前复权，已使用本地缓存增量更新",
+  "fallback_reason": "",
+  "trigger": "manual",
+  "elapsed_sec": 247.99,
+  "stats": {
+    "universe_total": 5928,
+    "after_filter": 35,
+    "scanned": 35,
+    "signals": 0,
+    "filter_detail": {
+      "科创板/北交所": 987,
+      "价格异常": 112,
+      "ST/退市": 456,
+      "历史数据不足": 3783,
+      "成交额不足/停牌": 555
+    },
+    "params": {
+      "min_break_days": 3,
+      "max_cont_lookback": 10,
+      "strict_decline": true,
+      "min_decline_pct": 2.0,
+      "min_yang_pct": 0.5,
+      "max_yang_pct": 9.5,
+      "require_close_above_lower": true,
+      "require_low_touch_lower": false,
+      "require_volume_up": false
+    },
+    "boll": {
+      "window": 20,
+      "mult": 2.0
+    }
+  },
+  "backtest_summary": {
+    "backtested": 0,
+    "avg_win_rate": 0.0,
+    "top_n": 0,
+    "top_n_target": 10,
+    "hold_days": 10,
+    "backtest_years": 3,
+    "prior_win_rate": 0.48,
+    "prior_weight": 4.0,
+    "min_signals": 2,
+    "eligible_count": 0,
+    "rule": "信号出现后第 10 个交易日收盘价相对信号日收盘价 > 0 记为获胜",
+    "smoothing": "贝叶斯平滑：(胜次 + 先验权重×先验胜率)/(样本数 + 先验权重)；样本不足不参与 TopN",
+    "ranking": "按平滑后历史胜率降序，同胜率依次比较平均收益、信号次数"
+  },
+  "results": [],
+  "params": {
+    "boll_window": 20,
+    "boll_std_mult": 2.0,
+    "min_break_days": 3,
+    "min_yang_pct": 0.5,
+    "min_decline_pct": 2.0,
+    "exclude_prefixes": [
+      "688",
+      "689",
+      "8",
+      "4",
+      "920"
+    ],
+    "min_amount": 30000000.0,
+    "hold_days": 10,
+    "top_n": 10,
+    "scan_cron": "交易日 14:30"
+  },
+  "push": null
+}
