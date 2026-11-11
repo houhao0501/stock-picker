@@ -179,6 +179,58 @@ class BaseSource:
         return out
 
 
+def preselect_codes(snap: pd.DataFrame) -> list[str]:
+    """零历史成本的前置粗筛：只用全市场快照字段，先剔掉绝不可能命中信号的股票。
+
+    设计原则：只做「最终判定的宽松必要条件」，宁可多留、绝不误杀；完整判定
+    仍由 strategy.apply_filters + check_reversal 执行。本函数唯一作用是减少
+    需要逐只拉取 3 年历史的股票数量——这正是耗时与东方财富限流的根源。
+
+    依据 2026-11-11 真实全市场运行的过滤明细（共 5928 只）：
+      科创板/北交所 987、ST/退市 456、价格异常 112、成交额不足/停牌 555，
+      合计 2110 只原本用快照就能剔除，却各自拉了 3 年历史。
+    另加「收阳 + 涨幅区间」：对应 check_reversal_fast 的前两条硬判定，
+    用快照的 price / open / pct_chg 即可判断，零额外请求再砍掉当日下跌的股票。
+    涨幅边界刻意放宽，避免前复权与快照昨收在除权日口径不一致导致漏信号。
+    """
+    lo = config.MIN_YANG_PCT - 1.0
+    hi = config.MAX_YANG_PCT + 1.0
+    prefixes = tuple(config.EXCLUDE_PREFIXES)
+    kw = [k.upper() for k in config.EXCLUDE_NAME_KEYWORDS]
+    out: list[str] = []
+    for row in snap.to_dict("records"):
+        code = str(row.get("code", "")).zfill(6)
+        if code.startswith(prefixes):
+            continue
+        name = str(row.get("name", "") or "")
+        if any(k in name.upper() for k in kw):
+            continue
+        try:
+            price = float(row.get("price") or 0)
+            pre_close = float(row.get("pre_close") or 0)
+            amount = float(row.get("amount") or 0)
+            volume = float(row.get("volume") or 0)
+            open_ = float(row.get("open") or 0)
+        except (TypeError, ValueError):
+            continue
+        if price < config.MIN_PRICE or price > config.MAX_PRICE or pre_close <= 0:
+            continue
+        if amount < config.MIN_AMOUNT or volume <= 0:
+            continue
+        # 收阳：与 check_reversal_fast 的 close[i] > open[i] 同源同值
+        if price <= open_:
+            continue
+        # 涨幅区间：宽松超集；字段异常时保留，交给后续完整判定
+        try:
+            pct = float(row.get("pct_chg"))
+            if pct == pct and abs(pct) != float("inf") and not (lo <= pct <= hi):
+                continue
+        except (TypeError, ValueError):
+            pass
+        out.append(code)
+    return out
+
+
 # ---------------------------------------------------------------- AkShare
 class AkShareSource(BaseSource):
     name = "akshare"
@@ -246,14 +298,20 @@ class AkShareSource(BaseSource):
     def fetch(self) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], dict]:
         snap = self._spot()
         end = _recent_trade_day()
-        codes = snap["code"].astype(str).tolist()
+        # 前置粗筛：先用零成本的快照条件缩小股票池，再逐只拉 3 年历史。
+        # 被剔除的股票在 strategy.apply_filters / check_reversal 里本来也一定不命中，
+        # 因此结果完全不变，只是省下大量无效请求（同时缓解东方财富限流）。
+        codes = preselect_codes(snap)
+        after_prefilter = len(codes)
         if config.UNIVERSE_LIMIT > 0:
             codes = codes[: config.UNIVERSE_LIMIT]
-        log.info("AkShare 全市场 %d 只，开始拉取/更新历史日线（并发 %d）", len(codes), config.MAX_WORKERS)
+        log.info("AkShare 全市场 %d 只，前置粗筛后 %d 只需拉历史（并发 %d）",
+                 len(snap), len(codes), config.MAX_WORKERS)
         hists = self._batch_histories(codes, lambda c: self._hist_one(c, end))
         meta = {
             "source": "akshare", "market_date": f"{end[:4]}-{end[4:6]}-{end[6:8]}",
-            "universe_total": len(snap), "history_loaded": len(hists),
+            "universe_total": len(snap), "preselected": after_prefilter,
+            "history_loaded": len(hists),
             "note": "实时行情来自东方财富，历史日线为前复权，已使用本地缓存增量更新",
         }
         return snap, hists, meta
