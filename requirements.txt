@@ -1,0 +1,11 @@
+# 核心依赖
+pandas>=1.5
+numpy>=1.23
+requests>=2.28
+Flask>=2.2
+APScheduler>=3.10
+
+# 行情数据源（按需安装，默认 akshare）
+akshare>=1.12
+# tushare>=1.2.89   # 使用 tushare 时取消注释
+# baostock>=0.8.8   # 使用 baostock 时取消注释
