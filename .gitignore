@@ -1,0 +1,18 @@
+# 密钥：绝对不要上传（Webhook 等同于密码）
+.env
+.env.*
+!.env.example
+
+# 运行产物与大体积缓存
+data/results/
+data/cache/
+data/spot_cache.json
+data/trade_calendar.json
+logs/
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# 注意：docs/ 必须提交，它是 GitHub Pages 的结果页

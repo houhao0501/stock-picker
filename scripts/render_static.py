@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""把 data/results/latest.json 渲染成自包含静态网页，供 GitHub Pages 展示。
+
+不依赖后端、不依赖 JavaScript：表格由 Python 直接生成，任意静态托管都能打开。
+同时把 latest.json 复制到 docs/ 方便下载核对。
+"""
+from __future__ import annotations
+
+import html
+import json
+import shutil
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "data" / "results" / "latest.json"
+DOCS = ROOT / "docs"
+CN_TZ = ZoneInfo("Asia/Shanghai")
+
+CSS = """
+:root{--bg:#0d1117;--panel:#161b22;--line:#273041;--txt:#e6edf3;--muted:#8b949e;
+--up:#f0524d;--down:#2ea043;--gold:#f2b544;--accent:#4c8dff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:28px 18px 48px}
+header h1{font-size:22px;margin:0 0 6px}
+.sub{color:var(--muted);font-size:13px}
+.tag{display:inline-block;padding:2px 8px;border:1px solid var(--gold);color:var(--gold);
+border-radius:20px;font-size:11px;margin-left:8px;vertical-align:middle}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:22px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .label{color:var(--muted);font-size:12px}
+.kpi .value{font-size:24px;font-weight:700;margin-top:4px}
+.kpi .unit{font-size:12px;color:var(--muted);margin-left:3px;font-weight:400}
+.status{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:12px 16px;margin-bottom:18px;font-size:13px;display:flex;flex-wrap:wrap;gap:8px 24px}
+.status b{color:var(--muted);font-weight:400;margin-right:6px}
+.ok{color:var(--down)}.warn{color:var(--gold)}.err{color:var(--up)}
+.note{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:14px 18px;margin-bottom:18px;font-size:13px;color:#c9d1d9}
+.note h2{font-size:14px;margin:0 0 8px;color:var(--txt)}
+.note code{color:var(--gold);font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.scroll{overflow-x:auto;border-radius:10px}
+table{width:100%;border-collapse:collapse;background:var(--panel);
+border:1px solid var(--line);font-size:13px}
+th,td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{background:#1b2230;color:var(--muted);font-weight:500}
+th:nth-child(2),th:nth-child(3),th:last-child,
+td:nth-child(2),td:nth-child(3),td:last-child{text-align:left}
+td:first-child{text-align:center;color:var(--muted)}
+tr.top{background:rgba(242,181,68,.07)}
+tr.top td:first-child{color:var(--gold);font-weight:700}
+tr:hover{background:rgba(76,141,255,.08)}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.up{color:var(--up)}.down{color:var(--down)}.strong{font-weight:700;color:var(--gold)}
+.badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;
+background:rgba(242,181,68,.15);color:var(--gold);font-size:10px}
+.muted{color:var(--muted)}
+.empty{text-align:center;padding:40px;color:var(--muted)}
+footer{color:var(--muted);font-size:11px;text-align:center;margin-top:24px;line-height:1.8}
+@media(max-width:640px){.wrap{padding:16px 10px}header h1{font-size:18px}.kpi .value{font-size:20px}}
+"""
+
+
+def esc(v) -> str:
+    return html.escape("" if v is None else str(v), quote=True)
+
+
+def num(v, default: float = 0.0) -> float:
+    try:
+        f = float(v)
+        return f if f == f and abs(f) != float("inf") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def pct(v) -> str:
+    x = num(v)
+    cls = "up" if x >= 0 else "down"
+    sign = "+" if x >= 0 else ""
+    return f'<span class="{cls}">{sign}{x:.2f}%</span>'
+
+
+def kpi(label: str, value, unit: str = "") -> str:
+    u = f'<span class="unit">{esc(unit)}</span>' if unit else ""
+    return f'<div class="kpi"><div class="label">{esc(label)}</div><div class="value">{esc(value)}{u}</div></div>'
+
+
+def render(d: dict) -> str:
+    st = d.get("stats", {})
+    pr = d.get("params", {})
+    rows = d.get("results", [])
+    tops = [x for x in rows if x.get("is_top")]
+    push = d.get("push")
+
+    wrs = [num(x.get("win_rate")) for x in tops]
+    avg_wr = sum(wrs) / len(wrs) * 100 if wrs else 0.0
+    top_n = pr.get("top_n", 10)
+
+    demo_tag = '<span class="tag">演示数据</span>' if d.get("is_demo") else ""
+    if not push:
+        push_txt = '<span class="warn">本次未推送（dry-run 或尚未执行推送）</span>'
+    elif push.get("ok"):
+        push_txt = f'<span class="ok">已推送 · {esc(push.get("channel"))}</span>'
+    else:
+        push_txt = f'<span class="err">推送失败 · {esc(push.get("detail"))}</span>'
+
+    window, mult = pr.get("boll_window", 20), pr.get("boll_std_mult", 2)
+    brk, dec = pr.get("min_break_days", 3), pr.get("min_decline_pct", 2)
+    ymin, hold = pr.get("min_yang_pct", 0.5), pr.get("hold_days", 10)
+    cron = pr.get("scan_cron", "交易日 14:30")
+
+    fallback = d.get("fallback_reason")
+    fb_note = f'<br><span class="warn">注意：真实数据源失败原因 {esc(fallback)}</span>' if fallback else ""
+
+    kpis = "".join([
+        kpi("全市场", st.get("universe_total", 0), "只"),
+        kpi("过滤后", st.get("after_filter", 0), "只"),
+        kpi("命中信号", st.get("signals", 0), "只"),
+        kpi(f"Top{top_n} 平均胜率", f"{avg_wr:.1f}", "%"),
+    ])
+
+    if rows:
+        trs = []
+        for i, x in enumerate(rows, 1):
+            is_top = bool(x.get("is_top"))
+            cls = ' class="top"' if is_top else ""
+            badge = '<span class="badge">TOP</span>' if is_top else ""
+            sample = "" if x.get("sample_ok", True) else '<span class="muted">样本偏少</span>'
+            trs.append(
+                f"<tr{cls}><td>{i}</td>"
+                f'<td class="mono">{esc(x.get("code"))}</td>'
+                f"<td>{esc(x.get('name'))}{badge}</td>"
+                f'<td class="mono">{num(x.get("price")):.2f}</td>'
+                f'<td class="mono">{pct(x.get("pct_chg"))}</td>'
+                f'<td class="mono strong">{num(x.get("win_rate")) * 100:.1f}%</td>'
+                f'<td class="mono">{pct(x.get("avg_return"))}</td>'
+                f'<td class="mono">{int(num(x.get("signal_count")))} / {int(num(x.get("wins")))}</td>'
+                f'<td class="mono">{int(num(x.get("break_days")))}</td>'
+                f"<td>{sample}</td></tr>"
+            )
+        table = (
+            '<div class="scroll"><table><thead><tr>'
+            "<th>#</th><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th>"
+            "<th>历史胜率</th><th>平均收益</th><th>信号/胜次</th><th>破轨天数</th><th>备注</th>"
+            "</tr></thead><tbody>" + "".join(trs) + "</tbody></table></div>"
+        )
+    else:
+        table = '<div class="empty">暂无扫描结果。请在 GitHub Actions 里手动运行一次工作流。</div>'
+
+    generated = datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>布林下轨反转选股 · 扫描结果</title>
+<style>{CSS}</style></head><body><div class="wrap">
+<header>
+  <h1>布林下轨反转选股 · 扫描结果{demo_tag}</h1>
+  <div class="sub">{esc(cron)} 自动扫描 · 连续跌破布林下轨后阳线收复 · 按历史胜率排序</div>
+</header>
+<section class="kpis">{kpis}</section>
+<section class="status">
+  <div><b>扫描时间</b>{esc(d.get('scan_time', '-'))}</div>
+  <div><b>交易日</b>{esc(d.get('market_date', '-'))}</div>
+  <div><b>数据源</b>{esc(d.get('source', '-'))}</div>
+  <div><b>推送</b>{push_txt}</div>
+  <div><b>耗时</b>{esc(d.get('elapsed_sec', '-'))} s</div>
+</section>
+<section class="note">
+  <h2>策略口径</h2>
+  BOLL(<code>{esc(window)}, {esc(mult)}</code>)；昨日往前连续 ≥<code>{esc(brk)}</code> 日收盘在下轨之下且逐日走低，
+  区间跌幅 ≥<code>{esc(dec)}%</code>；扫描时点用盘中价构造当日 K 线，要求<strong>收阳、涨幅 ≥{esc(ymin)}%、收盘重新站上下轨</strong>。<br>
+  股票池剔除科创板 / 北交所 / ST / 退市 / 停牌 / 成交额过低 / 上市不足 60 日。<br>
+  历史胜率：同类信号后持有 <code>{esc(hold)}</code> 个交易日收益 &gt; 0 记为获胜，回看 3 年，
+  贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。{fb_note}
+</section>
+{table}
+<footer>
+  本页由 GitHub Actions 每次扫描后自动生成，仅供量化研究参考，不构成投资建议。市场有风险，决策需谨慎。<br>
+  页面生成时间：{generated} · 原始数据：<a href="latest.json">latest.json</a>
+</footer>
+</div></body></html>
+"""
+
+
+def main() -> int:
+    DOCS.mkdir(parents=True, exist_ok=True)
+    if SRC.exists():
+        d = json.loads(SRC.read_text(encoding="utf-8"))
+        shutil.copyfile(SRC, DOCS / "latest.json")
+    else:
+        d = {}
+        print("::warning::未找到 latest.json，生成空结果页")
+    (DOCS / "index.html").write_text(render(d), encoding="utf-8")
+    print(f"已生成 {DOCS / 'index.html'}（{len(d.get('results', []))} 条结果）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
