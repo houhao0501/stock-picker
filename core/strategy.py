@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 
 import config
-from core.indicators import PatternParams, bollinger, check_reversal, make_today_bar
+from core.indicators import (
+    PatternParams, bollinger, build_kline_series, check_reversal, make_today_bar,
+)
 from core.utils import safe_float
 
 log = logging.getLogger(__name__)
@@ -99,15 +101,8 @@ def scan(
         if not ok:
             continue
 
-        n = len(full)
-        s = max(0, n - 45)
-        spark = {
-            "dates": [str(x)[:10] for x in full["date"].iloc[s:].tolist()],
-            "close": [round(float(x), 2) for x in full["close"].iloc[s:].tolist()],
-            "lower": [round(float(x), 2) if np.isfinite(x) else None for x in bands["lower"].iloc[s:].tolist()],
-            "upper": [round(float(x), 2) if np.isfinite(x) else None for x in bands["upper"].iloc[s:].tolist()],
-            "mid": [round(float(x), 2) if np.isfinite(x) else None for x in bands["mid"].iloc[s:].tolist()],
-        }
+        # 完整日 K 序列（OHLCV + BOLL + MA + MACD），供网页画同花顺式 K 线
+        spark = build_kline_series(full, bands, n_days=90)
         candidates.append(
             {
                 "code": code,
