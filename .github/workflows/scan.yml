@@ -1,19 +1,16 @@
-# 布林下轨反转选股 · A 股交易日自动扫描
+# 布林下轨反转选股 · 按需手动筛选
 # ---------------------------------------------------------------------------
-# 时间：UTC 06:27 = 北京时间 14:27（周一至周五）
-#   刻意避开 :00 / :30 整点高峰，降低 GitHub 排队延迟。
-#   注意：GitHub 官方不保证 schedule 准点，高负载时可能延迟 5~20 分钟甚至丢跑。
-# 交易日：由 scripts/trading_day_guard.py 查 A 股交易日历，法定节假日自动跳过
-#   （cron 本身只能排除周末）。
-# 结果：每次运行把 docs/ 静态网页提交回仓库 —— 既可用 GitHub Pages 公网查看，
-#   又能产生仓库活动，避免「公开仓库 60 天无活动自动停用定时任务」。
-# 密钥：Webhook 必须放 Settings → Secrets → WECOM_WEBHOOK，切勿写进代码或 .env 上传。
+# 触发：仅在 GitHub Actions 页面点「Run workflow」时运行（网页「立即筛选」会跳转过来）。
+#   不设任何自动定时（schedule 已移除）—— 空仓想找票时手动跑一次即可。
+# 推送：不推企业微信；结果只写入 docs/ 静态网页，用 GitHub Pages 公网查看。
+# 交易日：手动触发不做交易日阻断，任何时间都能跑；非交易日拿到的是最近收盘快照。
+# 缓存：网页把最近一次结果缓存到本机浏览器，关闭/刷新只读缓存，
+#   不会重新拉行情、不会重复触发扫描。
+# 防重复：concurrency 保证同一时刻只有一个扫描在跑，连点两次不会并发拉数据。
 # ---------------------------------------------------------------------------
-name: 选股扫描 · 交易日 14:27
+name: 选股扫描 · 手动触发
 
 on:
-  schedule:
-    - cron: '27 6 * * 1-5'
   workflow_dispatch:
     inputs:
       source:
@@ -24,10 +21,6 @@ on:
         description: '只扫描前 N 只股票（联调用；0 = 全市场）'
         required: false
         default: '0'
-      no_push:
-        description: '填 true 则只跑流程、不推企业微信'
-        required: false
-        default: 'false'
 
 permissions:
   contents: write
@@ -39,7 +32,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 20
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -442,14 +435,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 判断今天是否 A 股交易日
-        id: calendar
-        env:
-          TZ: Asia/Shanghai
-        run: python scripts/trading_day_guard.py
-
       - name: 恢复历史日线缓存
-        if: steps.calendar.outputs.trading == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -459,31 +445,24 @@ jobs:
           restore-keys: |
             stock-cache-
 
-      - name: 扫描全市场并推送 Top10
-        if: steps.calendar.outputs.trading == 'true'
+      - name: 扫描全市场（不推送，结果写入网页）
         env:
           TZ: Asia/Shanghai
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          WECOM_KEYWORD: ${{ vars.WECOM_KEYWORD }}
           WEB_BASE_URL: ${{ vars.WEB_BASE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
           STOCK_DATA_SOURCE: ${{ inputs.source || 'akshare' }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           UNIVERSE_LIMIT: ${{ inputs.universe_limit || '0' }}
-          # 关键：拉不到真实行情时直接失败并告警，绝不降级成演示数据误导决策
+          # 关键：拉不到真实行情时直接失败，绝不降级成演示数据误导决策
           AUTO_FALLBACK_TO_DEMO: 'false'
           MAX_WORKERS: '8'
           HIST_RETRY: '3'
-        run: |
-          ARGS=""
-          if [ "${{ inputs.no_push }}" = "true" ]; then ARGS="--no-push"; fi
-          python main.py scan $ARGS
+        # main.py scan 默认即不推送企业微信；结果由下一步生成静态网页
+        run: python main.py scan
 
       - name: 生成结果网页（GitHub Pages）
-        if: steps.calendar.outputs.trading == 'true'
         run: python scripts/render_static.py
 
       - name: 提交结果与网页
-        if: steps.calendar.outputs.trading == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -496,21 +475,8 @@ jobs:
           fi
 
       - name: 上传结果 JSON
-        if: steps.calendar.outputs.trading == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: stock-result-${{ github.run_id }}
           path: data/results/latest.json
           retention-days: 14
-
-      - name: 失败告警（避免静默漏跑）
-        if: failure()
-        env:
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          WECOM_KEYWORD: ${{ vars.WECOM_KEYWORD }}
-        run: |
-          if [ -n "$WECOM_WEBHOOK" ]; then
-            export MSG="${WECOM_KEYWORD}【选股系统告警】定时任务执行失败，请到 GitHub Actions 查看运行日志"
-            python -c 'import json,os; print(json.dumps({"msgtype":"text","text":{"content":os.environ["MSG"]}}, ensure_ascii=False))' \
-              | curl -s -X POST "$WECOM_WEBHOOK" -H 'Content-Type: application/json' --data-binary @- || true
-          fi
