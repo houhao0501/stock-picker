@@ -10,6 +10,10 @@
 
 支持：akshare（默认）、tushare、baostock、demo。
 真实源均带本地 CSV 缓存与增量更新：首次全市场较慢，之后每天只补最近数据。
+
+akshare 源内置双通道：优先东方财富 push2，若全市场快照探测失败（部分机房 IP
+被长期断连）则本次扫描整体自动切换新浪行情。策略、参数、结果口径均不变，
+仅按通道隔离历史缓存目录，避免东财（成交量=手）与新浪（成交量=股）混用。
 """
 from __future__ import annotations
 
@@ -231,18 +235,68 @@ def preselect_codes(snap: pd.DataFrame) -> list[str]:
     return out
 
 
+def _clean_sina_code(value) -> str:
+    """新浪快照代码形如 sh600000 / sz000001 / bj920000，清洗成纯 6 位数字。
+
+    股票池过滤与前置粗筛都按纯 6 位代码做前缀判断（688/689/8/4/920），
+    带前缀会让科创板/北交所漏进选股池，因此进入统一数据契约前必须先清洗。
+    """
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return (digits[-6:] if len(digits) >= 6 else digits).zfill(6)
+
+
+def _sina_symbol(code: str) -> str:
+    """纯 6 位代码 → 新浪日线 symbol（sh/sz/bj 前缀）。"""
+    if code.startswith("920") or code.startswith(("8", "4")):
+        return "bj" + code
+    if code.startswith(("6", "9")):
+        return "sh" + code
+    return "sz" + code
+
+
 # ---------------------------------------------------------------- AkShare
 class AkShareSource(BaseSource):
+    """东方财富通道，快照探测失败时整体自动切换新浪通道。
+
+    东财 push2 整族域名在部分机房 IP 段会被长期断连。这里只在「全市场快照」
+    这一步做一次探测：一旦失败就把本次扫描整体切到新浪，后续所有历史请求
+    直接走新浪，避免每只股票重复撞东财。输出仍统一为 SNAP_COLS / HIST_COLS，
+    source 仍标记为 akshare（前端演示数据判定依赖它），仅额外记录 channel。
+    """
     name = "akshare"
 
+    def __init__(self):
+        self._channel = "eastmoney"   # "eastmoney" | "sina"
+
+    def _cache_dir(self) -> Path:
+        # 通道隔离：新浪用独立缓存目录，避免与东财前复权/成交量单位混用
+        sub = self.name if self._channel == "eastmoney" else "sina"
+        d = config.CACHE_DIR / sub
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def _spot(self) -> pd.DataFrame:
+        """先探东财，失败则整体切新浪；只浪费一次请求，不做重试（避免延长限流）。"""
+        try:
+            df = self._spot_em()
+            self._channel = "eastmoney"
+            return df
+        except Exception as exc:  # noqa: BLE001
+            log.warning("东方财富实时快照不可用，切换新浪通道: %s", str(exc)[:160])
+        df = self._spot_sina()
+        self._channel = "sina"
+        log.info("已切换新浪行情通道，全市场快照 %d 只", len(df))
+        return df
+
+    def _spot_em(self) -> pd.DataFrame:
         import akshare as ak
 
         cache_file = config.DATA_DIR / "spot_cache.json"
         cached = read_json(cache_file)
-        if cached and (time.time() - cached.get("ts", 0)) < config.SPOT_CACHE_MINUTES * 60:
+        if (cached and cached.get("channel") == "eastmoney"
+                and (time.time() - cached.get("ts", 0)) < config.SPOT_CACHE_MINUTES * 60):
             return pd.DataFrame(cached["rows"])
-        log.info("拉取全市场实时快照 ...")
+        log.info("拉取全市场实时快照（东方财富）...")
         raw = ak.stock_zh_a_spot_em()
         mp = {
             "代码": "code", "名称": "name", "最新价": "price", "今开": "open", "最高": "high",
@@ -257,10 +311,79 @@ class AkShareSource(BaseSource):
         df["code"] = df["code"].astype(str).str.zfill(6)
         for c in SNAP_COLS[2:]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        atomic_write_json(cache_file, {"ts": time.time(), "rows": df.to_dict("records")})
+        atomic_write_json(cache_file, {"ts": time.time(), "channel": "eastmoney",
+                                       "rows": df.to_dict("records")})
+        return df
+
+    def _spot_sina(self) -> pd.DataFrame:
+        import akshare as ak
+
+        # 复用已被 .gitignore 忽略的文件名，靠 channel 标记与东财缓存隔离
+        cache_file = config.DATA_DIR / "spot_cache.json"
+        cached = read_json(cache_file)
+        if (cached and cached.get("channel") == "sina"
+                and (time.time() - cached.get("ts", 0)) < config.SPOT_CACHE_MINUTES * 60):
+            return pd.DataFrame(cached["rows"])
+        log.info("拉取全市场实时快照（新浪）...")
+        raw = ak.stock_zh_a_spot()
+        mp = {
+            "代码": "code", "名称": "name", "最新价": "price", "今开": "open", "最高": "high",
+            "最低": "low", "昨收": "pre_close", "涨跌幅": "pct_chg", "成交额": "amount",
+            "成交量": "volume",
+        }
+        df = raw.rename(columns=mp)
+        # 关键：新浪代码带 sh/sz/bj 前缀，不清洗会让科创板/北交所漏进股票池
+        df["code"] = df["code"].astype(str).map(_clean_sina_code)
+        for c in SNAP_COLS:
+            if c not in df.columns:
+                df[c] = 0.0          # 新浪快照无换手率/总市值，补 0（策略不依赖）
+        df = df[SNAP_COLS].copy()
+        for c in SNAP_COLS[2:]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.drop_duplicates(subset=["code"], keep="last").reset_index(drop=True)
+        atomic_write_json(cache_file, {"ts": time.time(), "channel": "sina",
+                                       "rows": df.to_dict("records")})
         return df
 
     def _hist_one(self, code: str, end_yyyymmdd: str) -> pd.DataFrame | None:
+        if self._channel == "sina":
+            return self._hist_one_sina(code, end_yyyymmdd)
+        return self._hist_one_em(code, end_yyyymmdd)
+
+    def _hist_one_sina(self, code: str, end_yyyymmdd: str) -> pd.DataFrame | None:
+        import akshare as ak
+
+        end_iso = f"{end_yyyymmdd[:4]}-{end_yyyymmdd[4:6]}-{end_yyyymmdd[6:8]}"
+        stale = self._cache_is_stale(code, end_iso)
+        old = None if stale else self._read_cache(code)
+        if old is not None and len(old):
+            start_dt = date.fromisoformat(str(old["date"].iloc[-1])) - timedelta(days=12)
+            start = start_dt.strftime("%Y%m%d")
+        else:
+            start = _hist_start()
+        start_iso = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
+
+        raw = None
+        for attempt in range(config.HIST_RETRY):
+            try:
+                _throttle()
+                raw = ak.stock_zh_a_daily(symbol=_sina_symbol(code), adjust="qfq")
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt == config.HIST_RETRY - 1:
+                    log.debug("sina %s 重试耗尽: %s", code, exc)
+                    return old
+                time.sleep(0.6 * (attempt + 1) + random.random() * 0.4)
+        if raw is None or len(raw) == 0:
+            return old
+        fresh = _norm_hist(raw)
+        # 新浪返回上市以来全历史：按回看窗口裁剪，并丢弃当日未收盘 K 线
+        fresh = fresh[(fresh["date"] >= start_iso) & (fresh["date"] < end_iso)]
+        if len(fresh) == 0:
+            return old
+        return self._merge_cache(code, fresh)
+
+    def _hist_one_em(self, code: str, end_yyyymmdd: str) -> pd.DataFrame | None:
         import akshare as ak
 
         end_iso = f"{end_yyyymmdd[:4]}-{end_yyyymmdd[4:6]}-{end_yyyymmdd[6:8]}"
@@ -305,14 +428,19 @@ class AkShareSource(BaseSource):
         after_prefilter = len(codes)
         if config.UNIVERSE_LIMIT > 0:
             codes = codes[: config.UNIVERSE_LIMIT]
-        log.info("AkShare 全市场 %d 只，前置粗筛后 %d 只需拉历史（并发 %d）",
-                 len(snap), len(codes), config.MAX_WORKERS)
+        log.info("AkShare 全市场 %d 只，前置粗筛后 %d 只需拉历史（通道=%s，并发 %d）",
+                 len(snap), len(codes), self._channel, config.MAX_WORKERS)
         hists = self._batch_histories(codes, lambda c: self._hist_one(c, end))
+        channel_note = (
+            "实时行情来自东方财富，历史日线为前复权，已使用本地缓存增量更新"
+            if self._channel == "eastmoney" else
+            "实时行情与历史日线来自新浪（东方财富通道不可用，已自动切换；前复权，缓存独立）"
+        )
         meta = {
             "source": "akshare", "market_date": f"{end[:4]}-{end[4:6]}-{end[6:8]}",
             "universe_total": len(snap), "preselected": after_prefilter,
-            "history_loaded": len(hists),
-            "note": "实时行情来自东方财富，历史日线为前复权，已使用本地缓存增量更新",
+            "history_loaded": len(hists), "channel": self._channel,
+            "note": channel_note,
         }
         return snap, hists, meta
 
