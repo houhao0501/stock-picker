@@ -1,23 +1,23 @@
 {
-  "run_id": "20261112_132130",
-  "scan_time": "2026-11-12 13:22:36",
+  "run_id": "20261112_145014",
+  "scan_time": "2026-11-12 14:53:32",
   "market_date": "2026-11-12",
   "source": "akshare",
   "is_demo": false,
   "source_note": "实时行情与历史日线来自新浪（东方财富通道不可用，已自动切换；前复权，缓存独立）",
   "fallback_reason": "",
   "trigger": "manual",
-  "elapsed_sec": 65.55,
+  "elapsed_sec": 197.38,
   "stats": {
     "universe_total": 5579,
-    "after_filter": 50,
-    "scanned": 50,
+    "after_filter": 597,
+    "scanned": 597,
     "signals": 0,
     "filter_detail": {
       "科创板/北交所": 973,
-      "历史数据不足": 3314,
-      "价格异常": 48,
-      "成交额不足/停牌": 1012,
+      "历史数据不足": 3215,
+      "价格异常": 51,
+      "成交额不足/停牌": 561,
       "ST/退市": 182
     },
     "params": {
