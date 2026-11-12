@@ -1,6 +1,6 @@
 {
-  "run_id": "20261112_152734",
-  "scan_time": "2026-11-12 15:30:56",
+  "run_id": "20261112_154745",
+  "scan_time": "2026-11-12 15:50:45",
   "market_date": "2026-11-12",
   "source": "akshare",
   "is_demo": false,
@@ -10,7 +10,7 @@
   "snapshot_saved_at": "",
   "snapshot_channel": "sina",
   "trigger": "manual",
-  "elapsed_sec": 202.06,
+  "elapsed_sec": 180.71,
   "stats": {
     "universe_total": 5579,
     "after_filter": 596,
@@ -73,5 +73,11 @@
     "top_n": 10,
     "scan_cron": "交易日 14:30"
   },
-  "push": null
+  "push": {
+    "channel": "wecom_webhook",
+    "ok": true,
+    "detail": "ok",
+    "extra": null,
+    "content": "# 布林下轨反转选股 · 14:30 扫描\n> 扫描时间：<font color=\"comment\">2026-11-12 15:50:45</font>\n> 交易日：2026-11-12　数据源：akshare\n> 全市场 **5579** 只 → 过滤后 **596** 只 → 命中 **0** 只\n> 胜率口径：信号后持有 **10** 个交易日，回看 **3** 年\n\n**历史胜率 Top 0**\n> 今日无符合「连续跌破布林下轨后阳线收复」的标的。\n\n[查看完整选股结果与布林带走势](https://houhao0501.github.io/stock-picker/)\n<font color=\"comment\">提示：本结果由程序自动生成，仅供研究参考，不构成投资建议。</font>"
+  }
 }
