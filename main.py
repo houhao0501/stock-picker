@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from core.utils import setup_logging
@@ -27,9 +28,14 @@ def cmd_serve(args):
 
 
 def cmd_scan(args):
+    # 双保险：万一仓库里仍残留旧的定时 workflow，schedule 触发的扫描一律空转跳过。
+    # 只有 workflow_dispatch（手动点 Run workflow）或本地手动执行才会真正拉行情。
+    if os.getenv("GITHUB_EVENT_NAME") == "schedule":
+        print("按需手动模式：忽略 schedule 定时触发（未拉行情、未生成结果）。", flush=True)
+        return 0
     from core.pipeline import run_scan
 
-    result = run_scan(reason="manual", source=args.source, do_push=not args.no_push)
+    result = run_scan(reason="manual", source=args.source, do_push=getattr(args, "do_push", False))
     st = result["stats"]
     print("\n" + "=" * 66)
     print(f"扫描完成 {result['scan_time']}  数据源={result['source']}  耗时={result['elapsed_sec']}s")
@@ -71,9 +77,10 @@ def main():
     p_serve.add_argument("--port", type=int, default=None)
     p_serve.set_defaults(func=cmd_serve)
 
-    p_scan = sub.add_parser("scan", help="立即执行一次扫描")
+    p_scan = sub.add_parser("scan", help="立即执行一次扫描（按需手动触发）")
     p_scan.add_argument("--source", default=None, help="覆盖数据源 demo/akshare/tushare/baostock")
-    p_scan.add_argument("--no-push", action="store_true", help="不推送企业微信")
+    p_scan.add_argument("--no-push", action="store_true", help="不推送企业微信（默认即不推送）")
+    p_scan.add_argument("--push", dest="do_push", action="store_true", help="显式开启企业微信推送（默认关闭）")
     p_scan.set_defaults(func=cmd_scan)
 
     p_push = sub.add_parser("push-test", help="用最近结果测试推送")
