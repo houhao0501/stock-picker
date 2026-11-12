@@ -31,6 +31,16 @@ KEEP = [
     "hold_days", "last_signal", "recent_signals", "rank", "is_top",
 ]
 
+# 超跌观察榜字段（比命中结果更精简，但保留 spark 供点击看日 K）
+WATCH_KEEP = [
+    "code", "name", "price", "pct_chg", "pre_close", "open", "high", "low",
+    "amount", "hist_len", "last_hist_date", "spark",
+    "break_days", "decline_pct", "yang_pct", "gap_pct", "boll_pos", "ret5",
+    "is_yang", "lower", "upper", "mid", "note",
+]
+
+ACTIONS_URL = "https://github.com/houhao0501/stock-picker/actions/workflows/scan.yml"
+
 CSS = """
 :root{--bg:#0d1117;--panel:#161b22;--line:#273041;--txt:#e6edf3;--muted:#8b949e;
 --up:#f0524d;--down:#2ea043;--gold:#f2b544;--accent:#4c8dff;--bg2:#111823}
@@ -148,11 +158,71 @@ padding:12px 14px;font-size:13px;line-height:2;margin-top:14px}
 border:1px solid var(--accent);color:var(--txt);padding:10px 18px;border-radius:9px;
 font-size:13px;z-index:80;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .toast.hidden{display:none}
+
+/* ------- 手动筛选操作条 / 本机缓存状态 ------- */
+.actionbar{background:linear-gradient(135deg,#18233a,#161b22);border:1px solid var(--accent);
+border-radius:12px;padding:16px 18px;margin:0 0 18px}
+.actionbar .ab-top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.actionbar .ab-title{font-size:15px;font-weight:700;color:var(--txt)}
+.actionbar .ab-title small{font-weight:400;color:var(--muted);font-size:12px;margin-left:8px}
+.actionbar .ab-btns{display:flex;gap:9px;flex-wrap:wrap}
+.btn-lg{padding:10px 18px;font-size:13.5px;font-weight:600;border-radius:8px}
+.btn-go{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-go:hover{filter:brightness(1.12);border-color:var(--accent)}
+.ab-status{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px 20px;font-size:12.5px;
+color:var(--muted);border-top:1px dashed var(--line);padding-top:11px}
+.ab-status b{color:var(--txt);font-weight:600}
+.ab-status .cache-ok{color:var(--down)}
+.ab-status .cache-wait{color:var(--gold)}
+.ab-hint{margin:10px 0 0;font-size:11.5px;color:var(--muted);line-height:1.75}
+.ab-hint b{color:var(--gold)}
+.ab-spin{display:inline-block;width:9px;height:9px;border-radius:50%;
+background:var(--gold);margin-right:6px;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ------- 超跌观察榜 ------- */
+.watch-sec{margin:22px 0 0}
+.watch-sec>h2{font-size:16px;margin:0 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.watch-sec>.wdesc{color:var(--muted);font-size:12px;margin:0 0 12px;line-height:1.75}
+#wtbl tbody tr{cursor:pointer}
+.wtag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;
+background:rgba(76,141,255,.15);color:var(--accent)}
+.wtag.near{background:rgba(242,181,68,.16);color:var(--gold)}
+.gap-neg{color:var(--up);font-weight:600}
+.gap-pos{color:var(--down)}
 """
 
 PAGE_JS = r"""
 (function(){
-  var D = window.__STOCK_DATA__ || {results:[]};
+  /* ---- 本机结果缓存：打开/关闭/刷新网页只读缓存，不触发扫描、不重新拉行情 ---- */
+  var CKEY="stock_picker_result_v1", PKEY="stock_picker_pending_v1";
+  var SERVER = window.__STOCK_DATA__ || {results:[]};
+  var CACHE=null, PENDING=null;
+  try{CACHE=JSON.parse(localStorage.getItem(CKEY)||"null");}catch(e){}
+  try{PENDING=JSON.parse(localStorage.getItem(PKEY)||"null");}catch(e){}
+  var srvRid = SERVER.run_id || SERVER.scan_time || "";
+  var cacheRid = (CACHE && (CACHE.run_id||CACHE.scan_time)) || "";
+  var DATA_SOURCE, D;
+  if(srvRid){
+    D = SERVER;
+    if(srvRid!==cacheRid){
+      try{localStorage.setItem(CKEY,JSON.stringify(SERVER));}catch(e){}
+      DATA_SOURCE = "云端最新 · 已缓存到本机";
+    }else{
+      DATA_SOURCE = "本机缓存 · 与云端一致（未重复加载）";
+    }
+  }else if(CACHE && CACHE.results){
+    D = CACHE; DATA_SOURCE = "本机缓存（离线可读）";
+  }else{
+    D = {results:[],watchlist:[]}; DATA_SOURCE = "暂无数据，请点「立即筛选」";
+  }
+  if(!D.watchlist)D.watchlist=[];
+  var NEW_RESULT=false;
+  if(PENDING && srvRid && PENDING.fromRid && PENDING.fromRid!==srvRid){
+    NEW_RESULT=true;
+    try{localStorage.removeItem(PKEY);}catch(e){}
+    PENDING=null;
+  }
   var PM = D.price_map || {};
   var PD = D.price_date || D.market_date || "";
   var STALE = !!D.price_stale;
@@ -171,7 +241,10 @@ PAGE_JS = r"""
       '</div></div>';
   }
   function findResult(code){
-    for(var i=0;i<D.results.length;i++){if(String(D.results[i].code)===String(code))return D.results[i];}
+    var i,W;
+    for(i=0;i<D.results.length;i++){if(String(D.results[i].code)===String(code))return D.results[i];}
+    W=D.watchlist||[];
+    for(i=0;i<W.length;i++){if(String(W[i].code)===String(code))return W[i];}
     return null;
   }
   function priceOf(code){
@@ -358,45 +431,63 @@ PAGE_JS = r"""
   function open(code){
     var r=findResult(code);
     if(!r)return;
+    var isWatch = (r.note!=null);   // 超跌观察榜：无历史胜率回测
     $("mTitle").innerHTML=esc(r.code)+" · "+esc(r.name)+
-      (r.is_top?' <span class="tag">TOP '+(r.rank||"")+'</span>':"");
+      (isWatch?' <span class="tag">超跌观察</span>':
+        (r.is_top?' <span class="tag">TOP '+(r.rank||"")+'</span>':""));
     if(window.KLineChart){window.KLineChart.render($("chart"),r.spark,{view:60});}
     else{$("chart").textContent="图表组件未加载（kline.js 缺失）";}
     var amp=r.pre_close?(r.high-r.low)/r.pre_close*100:0;
     var cap=r.market_cap?(r.market_cap/1e8).toFixed(1)+" 亿":"—";
     var bp=r.boll_pos==null?"—":(r.boll_pos*100).toFixed(1)+"%";
-    $("mStats").innerHTML=
-      sec("当日行情 · 14:30 盘中快照",[
+    var quote=sec("当日行情 · 最近一次扫描快照",[
         ["现价",f2(r.price),cls(r.pct_chg)],["涨跌幅",(Number(r.pct_chg)>=0?"+":"")+f2(r.pct_chg)+"%",cls(r.pct_chg)],
         ["今开",f2(r.open),""],["最高",f2(r.high),"up"],["最低",f2(r.low),"down"],
         ["昨收",f2(r.pre_close),""],
         ["振幅",amp.toFixed(2)+"%",""],["成交额",fmtAmt(r.amount),""],
-        ["换手率",f2(r.turnover)+"%",""],["量比",f2(r.volume_ratio),""],
-        ["总市值",cap,""],["历史 K 线",r.hist_len+" 根",""]])+
-      sec("形态与布林 · BOLL(20, 2)",[
+        ["近 5 日",(Number(r.ret5)>=0?"+":"")+f2(r.ret5)+"%",cls(r.ret5)],
+        ["收盘布林位置",bp,""],
+        ["总市值",cap,""],["历史 K 线",r.hist_len+" 根",""]]);
+    var shape=sec("形态与布林 · BOLL(20, 2)",[
         ["连破下轨",r.break_days+" 天",""],["区间跌幅",f2(r.decline_pct)+"%","down"],
         ["阳线涨幅",(Number(r.yang_pct)>=0?"+":"")+f2(r.yang_pct)+"%","up"],
-        ["收盘布林位置",bp,""],
+        ["距下轨",(Number(r.gap_pct)>=0?"+":"")+f2(r.gap_pct)+"%",r.gap_pct<0?"down":"up"],
         ["布林下轨",f2(r.lower),"down"],["布林中轨",f2(r.mid),""],
-        ["布林上轨",f2(r.upper),"up"],["信号判定","收阳 · 站回下轨","up"]])+
-      sec("历史胜率 · 持有 "+(r.hold_days||10)+" 个交易日",[
-        ["平滑胜率",((r.win_rate||0)*100).toFixed(1)+"%","up"],
-        ["原始胜率",((r.win_rate_raw||0)*100).toFixed(1)+"%",""],
-        ["信号 / 胜次",r.signal_count+" / "+r.wins,""],
-        ["平均收益",(Number(r.avg_return)>=0?"+":"")+f2(r.avg_return)+"%",cls(r.avg_return)],
-        ["最好收益",(Number(r.best_return)>=0?"+":"")+f2(r.best_return)+"%","up"],
-        ["最差收益",(Number(r.worst_return)>=0?"+":"")+f2(r.worst_return)+"%","down"],
-        ["样本充足",r.sample_ok?"是":"否（不参与推送）",r.sample_ok?"up":"down"],
-        ["综合评分",f2(r.score),""]]);
+        ["布林上轨",f2(r.upper),"up"],
+        ["信号判定",isWatch?"观察 · 未确认":"收阳 · 站回下轨",isWatch?"":"up"]]);
+    if(isWatch){
+      $("mStats").innerHTML=quote+shape+
+        '<div class="stat-sec"><h4>离确认信号还差在哪</h4>'+
+        '<div class="wdesc" style="font-size:13px;line-height:1.9">'+esc(r.note)+
+        '<br><span class="muted">该股尚未满足「连跌破轨后收阳站回下轨」的完整条件，'+
+        '因此不进入 Top10 推送，也没有历史胜率回测。是否介入由你本人判断。</span></div></div>';
+    }else{
+      $("mStats").innerHTML=quote+shape+
+        sec("历史胜率 · 持有 "+(r.hold_days||10)+" 个交易日",[
+          ["平滑胜率",((r.win_rate||0)*100).toFixed(1)+"%","up"],
+          ["原始胜率",((r.win_rate_raw||0)*100).toFixed(1)+"%",""],
+          ["信号 / 胜次",r.signal_count+" / "+r.wins,""],
+          ["平均收益",(Number(r.avg_return)>=0?"+":"")+f2(r.avg_return)+"%",cls(r.avg_return)],
+          ["最好收益",(Number(r.best_return)>=0?"+":"")+f2(r.best_return)+"%","up"],
+          ["最差收益",(Number(r.worst_return)>=0?"+":"")+f2(r.worst_return)+"%","down"],
+          ["样本充足",r.sample_ok?"是":"否（不参与推送）",r.sample_ok?"up":"down"],
+          ["综合评分",f2(r.score),""]]);
+    }
     $("modalActs").innerHTML='<div class="rowbtns" style="margin-top:16px">'+
       '<button class="btn sm" data-act="watch" data-code="'+esc(r.code)+'">+ 加入候选池</button>'+
       '<button class="btn sm pri" data-act="buy" data-code="'+esc(r.code)+'">买入并设 -6% 止损</button></div>';
-    var sigs=(r.recent_signals||[]).slice().reverse();
-    $("sigBody").innerHTML=sigs.length?sigs.map(function(s){
-      return '<tr><td>'+esc(s.date)+'</td><td>'+f2(s.signal_close)+'</td><td>'+esc(s.exit_date)+
-        '</td><td class="'+cls(s.return_pct)+'">'+(Number(s.return_pct)>=0?"+":"")+f2(s.return_pct)+'%</td><td class="'+
-        (s.win?"up":"down")+'">'+(s.win?"胜":"负")+'</td></tr>';
-    }).join(""):'<tr><td colspan="5" class="muted" style="text-align:center">历史样本不足</td></tr>';
+    var sigSec=$("sigSec");
+    if(isWatch){
+      if(sigSec)sigSec.style.display="none";
+    }else{
+      if(sigSec)sigSec.style.display="";
+      var sigs=(r.recent_signals||[]).slice().reverse();
+      $("sigBody").innerHTML=sigs.length?sigs.map(function(s){
+        return '<tr><td>'+esc(s.date)+'</td><td>'+f2(s.signal_close)+'</td><td>'+esc(s.exit_date)+
+          '</td><td class="'+cls(s.return_pct)+'">'+(Number(s.return_pct)>=0?"+":"")+f2(s.return_pct)+'%</td><td class="'+
+          (s.win?"up":"down")+'">'+(s.win?"胜":"负")+'</td></tr>';
+      }).join(""):'<tr><td colspan="5" class="muted" style="text-align:center">历史样本不足</td></tr>';
+    }
     $("modal").classList.remove("hidden");
   }
 
@@ -410,7 +501,7 @@ PAGE_JS = r"""
     else if(act==="unwatch"){unwatch(code);renderAll();}
     else if(act==="sell"){sell(code);renderAll();toast("已删除该买入记录");}
   });
-  var trs=document.querySelectorAll("#tbl tbody tr[data-code]");
+  var trs=document.querySelectorAll("#tbl tbody tr[data-code], #wtbl tbody tr[data-code]");
   Array.prototype.forEach.call(trs,function(tr){
     tr.addEventListener("click",function(e){
       if(e.target&&e.target.closest&&e.target.closest("[data-act]"))return;
@@ -446,6 +537,87 @@ PAGE_JS = r"""
     clearTimeout(TT);TT=setTimeout(function(){t.className="toast hidden";},3200);
   };
   function toast(m){window.__toast(m);}
+
+  /* ---- 按需筛选 / 本机缓存 状态条 ----
+     静态页无法直接触发扫描（不能把 PAT 放进前端），「立即筛选」只做两件事：
+       1) 打开 GitHub Actions 手动触发页（由你在那边点一次 Run workflow）；
+       2) 在本机记一个 pending 标记，之后网页只读缓存，不重复发起、不重新拉行情。
+     轮询只 fetch 几十字节的 stamp.json 比对 run_id，绝不调用任何行情接口。 */
+  var PENDING_WINDOW_MS = 15*60*1000;
+  function fmtClock(ts){
+    var d=new Date(ts); if(isNaN(d.getTime()))return "";
+    function z(n){return n<10?"0"+n:""+n;}
+    return z(d.getHours())+":"+z(d.getMinutes())+":"+z(d.getSeconds());
+  }
+  function rid(){return D.run_id||D.scan_time||"";}
+  function renderBar(){
+    var st=$("abStatus"), hint=$("abHint");
+    if(!st||!hint)return;
+    var parts=[];
+    parts.push('<span>数据快照 <b>'+esc(D.scan_time||"—")+'</b></span>');
+    parts.push('<span>命中 <b>'+(D.results?D.results.length:0)+'</b> 只 · 超跌观察 <b>'+(D.watchlist?D.watchlist.length:0)+'</b> 只</span>');
+    var srcCls = (DATA_SOURCE.indexOf("本机缓存")>=0)?"cache-ok":"";
+    parts.push('<span>来源 <b class="'+srcCls+'">'+esc(DATA_SOURCE)+'</b></span>');
+    if(NEW_RESULT)parts.push('<span class="cache-ok"><b>✓ 新结果已载入并缓存到本机</b></span>');
+    st.innerHTML=parts.join("");
+
+    var p=PENDING;
+    var alive = p && (Date.now()-p.at) < PENDING_WINDOW_MS;
+    if(alive){
+      hint.innerHTML='<b class="cache-wait"><span class="ab-spin"></span>筛选进行中</b>　'+
+        '你于 <b>'+esc(fmtClock(p.at))+'</b> 发起了筛选，云端约需 3 分钟。'+
+        '此刻<b>关闭或重新打开网页都不会重复触发</b>，页面一直显示本机缓存的结果；'+
+        '新结果生成后这里会自动提示，再点「载入新结果」即可（只读取已生成好的结果文件，不会重新拉行情）。';
+    }else if(p){
+      hint.innerHTML='<span class="cache-wait">上次发起的筛选（'+esc(fmtClock(p.at))+'）已超过 15 分钟仍未检测到新结果，'+
+        '可能是没在 GitHub 页面点 Run workflow，或云端执行失败。可再点一次「立即筛选」。</span>';
+    }else{
+      hint.innerHTML='打开 / 关闭 / 刷新本页<b>只读取本机缓存的结果</b>，不会触发扫描、不会重新拉行情。'+
+        '只有点「立即筛选」才会在云端跑一次（约 3 分钟，5 分钟内出结果）。'+
+        '数据快照是扫描时刻的价格，<b>不是实时盘中价</b>。';
+    }
+  }
+  function loadNew(){
+    try{localStorage.removeItem(PKEY);}catch(e){}
+    location.reload();
+  }
+  function checkUpdate(manual){
+    if(!window.fetch)return;
+    var u="stamp.json?t="+Date.now();
+    fetch(u,{cache:"no-store"}).then(function(r){return r.json();}).then(function(j){
+      var nr=j.run_id||j.scan_time||"", cur=rid();
+      if(nr&&cur&&nr!==cur){
+        $("abHint").innerHTML='<span class="cache-ok"><b>✓ 云端新结果已生成</b>（'+esc(j.scan_time||nr)+'）　'+
+          '<button class="btn sm pri" id="btnLoadNew">载入新结果</button>　'+
+          '这只会读取已生成好的结果文件并缓存到本机，不会重新拉行情。</span>';
+        $("btnLoadNew").addEventListener("click",loadNew);
+        try{localStorage.removeItem(PKEY);}catch(e){}
+        PENDING=null;
+      }else if(manual){
+        toast("云端暂无新结果；若刚发起筛选，请等约 3 分钟");
+      }
+    }).catch(function(){
+      if(manual)toast("暂时取不到云端状态（可能离线），本机缓存结果仍可正常查看");
+    });
+  }
+  var btnGo=$("btnGo"), btnCheck=$("btnCheck");
+  if(btnGo)btnGo.addEventListener("click",function(){
+    try{localStorage.setItem(PKEY,JSON.stringify({at:Date.now(),fromRid:rid()}));}catch(e){}
+    PENDING={at:Date.now(),fromRid:rid()};
+    renderBar();
+    toast("已打开 GitHub 触发页，请在那个页面点一次「Run workflow」");
+  });
+  if(btnCheck)btnCheck.addEventListener("click",function(){checkUpdate(true);});
+  renderBar();
+  // 有待处理筛选时轻量轮询（只比对 run_id），最多 15 分钟；发现新结果即停
+  if(PENDING){
+    var t0=Date.now();
+    var timer=setInterval(function(){
+      if(Date.now()-t0>PENDING_WINDOW_MS || !PENDING){clearInterval(timer);return;}
+      checkUpdate(false);
+      if(!PENDING)clearInterval(timer);
+    },25000);
+  }
 
   renderAll();
 })();
@@ -535,11 +707,19 @@ def load_price_map(d: dict) -> tuple[dict, str, bool]:
 
 def build_data_js(d: dict, price_map: dict, price_date: str, price_stale: bool) -> str:
     rows = [{k: x[k] for k in KEEP if k in x} for x in d.get("results", [])]
+    watch = [{k: x[k] for k in WATCH_KEEP if k in x} for x in d.get("watchlist", [])]
     payload = {
         "results": rows,
+        "watchlist": watch,
         "scan_time": d.get("scan_time", ""),
         "market_date": d.get("market_date", ""),
+        "run_id": d.get("run_id", ""),
+        "source": d.get("source", ""),
         "is_demo": bool(d.get("is_demo")),
+        "elapsed_sec": d.get("elapsed_sec", 0),
+        "snapshot_channel": d.get("snapshot_channel", ""),
+        "snapshot_stale": bool(d.get("snapshot_stale")),
+        "signals": int((d.get("stats") or {}).get("signals", 0)),
         "price_map": price_map,
         "price_date": price_date,
         "price_stale": bool(price_stale),
@@ -628,9 +808,60 @@ def render(d: dict) -> str:
             '<p class="tip">点击任意一行查看该股日 K 详情（蜡烛图 · BOLL · 均线 · 成交量 · MACD · 逐日明细）。</p>'
         )
     else:
-        table = '<div class="empty">暂无扫描结果。请在 GitHub Actions 里手动运行一次工作流。</div>'
+        table = ('<div class="empty">本次没有严格确认「连跌破下轨 → 收阳站回」的信号。'
+                 '可直接看下方<b>超跌观察榜</b>人工挑选，或点上方「立即筛选」重新跑一次。</div>')
+
+    # ---- 超跌观察榜：服务端静态渲染，打开即有，不依赖 JS / 不受网络影响 ----
+    wl = d.get("watchlist", [])
+    if wl:
+        wtrs = []
+        for i, x in enumerate(wl, 1):
+            gap = num(x.get("gap_pct"))
+            gap_cls = "gap-neg" if gap < 0 else "gap-pos"
+            brk = int(num(x.get("break_days")))
+            near = ' <span class="wtag near">近信号</span>' if brk >= 2 else ""
+            wtrs.append(
+                f'<tr data-code="{esc(x.get("code"))}"><td>{i}</td>'
+                f'<td class="mono">{esc(x.get("code"))}</td>'
+                f'<td>{esc(x.get("name"))}{near}</td>'
+                f'<td class="mono">{num(x.get("price")):.2f}</td>'
+                f'<td class="mono">{pct(x.get("pct_chg"))}</td>'
+                f'<td class="mono {gap_cls}">{gap:+.2f}%</td>'
+                f'<td class="mono">{brk}</td>'
+                f'<td class="mono down">{num(x.get("decline_pct")):.2f}%</td>'
+                f'<td class="mono">{num(x.get("ret5")):+.2f}%</td>'
+                f'<td class="muted" style="text-align:left">{esc(x.get("note"))}</td>'
+                f'<td><div class="rowbtns">'
+                f'<button class="btn sm" data-act="watch" data-code="{esc(x.get("code"))}">+ 候选</button>'
+                f'<button class="btn sm pri" data-act="buy" data-code="{esc(x.get("code"))}">买入</button>'
+                f'</div></td></tr>'
+            )
+        watch_table = (
+            '<section class="watch-sec"><h2>超跌观察榜 <span class="tag">人工挑选</span></h2>'
+            '<p class="wdesc">按「距布林下轨」由近到远排序，列出贴近或跌破下轨、但尚未确认反转的股票。'
+            '这是空仓时人工找票用的观察池，<b>不是买入信号</b>；「说明」列写明它离确认信号还差在哪。'
+            '点任意一行看同花顺式日 K，点「+候选」加入下方个人观察台跟踪后续走势。</p>'
+            '<div class="scroll"><table id="wtbl"><thead><tr>'
+            '<th>#</th><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th>'
+            '<th>距下轨</th><th>连破天数</th><th>区间跌幅</th><th>近5日</th><th>说明</th><th>操作</th>'
+            '</tr></thead><tbody>' + "".join(wtrs) + '</tbody></table></div></section>'
+        )
+    else:
+        watch_table = ('<section class="watch-sec"><h2>超跌观察榜</h2>'
+                       '<div class="empty">本次扫描没有可用的超跌观察标的。</div></section>')
 
     generated = datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    actionbar = f'''<section class="actionbar">
+  <div class="ab-top">
+    <div class="ab-title">按需手动筛选 <small>不自动定时 · 不推企业微信 · 想找票时才跑一次</small></div>
+    <div class="ab-btns">
+      <a class="btn btn-lg btn-go" id="btnGo" href="{ACTIONS_URL}" target="_blank" rel="noopener">▶ 立即筛选</a>
+      <button class="btn btn-lg" id="btnCheck">↻ 检查新结果</button>
+    </div>
+  </div>
+  <div class="ab-status" id="abStatus"></div>
+  <p class="ab-hint" id="abHint"></p>
+</section>'''
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -639,15 +870,16 @@ def render(d: dict) -> str:
 <style>{CSS}</style></head><body><div class="wrap">
 <header>
   <h1>布林下轨反转选股 · 扫描结果{demo_tag}{stale_tag}</h1>
-  <div class="sub">{esc(cron)} 自动扫描 · 连续跌破布林下轨后阳线收复 · 按历史胜率排序</div>
+  <div class="sub">按需手动筛选 · 连续跌破布林下轨后阳线收复 · 严格信号按历史胜率排序，另附超跌观察榜供人工挑选</div>
 </header>
+{actionbar}
 <section class="kpis">{kpis}</section>
 <section class="status">
   <div><b>扫描时间</b>{esc(d.get('scan_time', '-'))}</div>
   <div><b>交易日</b>{esc(d.get('market_date', '-'))}</div>
   <div><b>数据源</b>{esc(d.get('source', '-'))}</div>
   <div><b>快照通道</b>{esc(d.get('snapshot_channel') or '-')}</div>
-  <div><b>推送</b>{push_txt}</div>
+  <div><b>结果</b><span class="ok">仅网页查看 · 不推送企业微信</span></div>
   <div><b>耗时</b>{esc(d.get('elapsed_sec', '-'))} s</div>
 </section>
 <section class="note">
@@ -659,9 +891,10 @@ def render(d: dict) -> str:
   贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。{fb_note}{stale_note}
 </section>
 {table}
+{watch_table}
 {PERSONAL_HTML}
 <footer>
-  本页由 GitHub Actions 每次扫描后自动生成，仅供量化研究参考，不构成投资建议。市场有风险，决策需谨慎。<br>
+  本页由 GitHub Actions 在你手动触发后生成，结果已缓存到本机浏览器；仅供量化研究参考，不构成投资建议。市场有风险，决策需谨慎。<br>
   页面生成时间：{generated} · 原始数据：<a href="latest.json">latest.json</a>
 </footer>
 </div>
@@ -672,9 +905,9 @@ def render(d: dict) -> str:
       <div id="chart"></div>
       <div id="mStats"></div>
       <div id="modalActs"></div>
-      <h4>历史同类信号（最近 6 次）</h4>
+      <div id="sigSec"><h4>历史同类信号（最近 6 次）</h4>
       <table id="sigTbl"><thead><tr><th>信号日</th><th>信号日收盘</th><th>持有到期日</th><th>持有收益</th><th>结果</th></tr></thead>
-      <tbody id="sigBody"></tbody></table>
+      <tbody id="sigBody"></tbody></table></div>
     </div>
   </div>
 </div>
@@ -705,8 +938,18 @@ def main() -> int:
         shutil.copyfile(KLINE_SRC, DOCS / "kline.js")
     else:
         raise SystemExit("缺少 static/kline.js，无法生成自包含结果页")
+    # 极小的版本戳：前端轮询只比对它（几十字节），不拉含 K 线的 latest.json
+    (DOCS / "stamp.json").write_text(
+        json.dumps({
+            "run_id": d.get("run_id", ""),
+            "scan_time": d.get("scan_time", ""),
+            "signals": int((d.get("stats") or {}).get("signals", 0)),
+            "watchlist": len(d.get("watchlist") or []),
+        }, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     print(
-        f"已生成 {DOCS / 'index.html'}（{len(d.get('results', []))} 条结果）、data.js、kline.js、latest.json"
+        f"已生成 {DOCS / 'index.html'}（{len(d.get('results', []))} 条结果）、data.js、kline.js、latest.json、stamp.json"
         f" | 价格映射 {len(price_map)} 只，基准 {price_date or '无'}"
     )
     return 0
