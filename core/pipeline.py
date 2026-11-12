@@ -90,6 +90,7 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
 
         snap, histories, meta = load_market(source)
         is_demo = meta.get("source") == "demo"
+        snap_stale = bool(meta.get("snapshot_stale"))
         _set(progress="扫描全市场形态")
 
         params = None  # 使用 config 中的默认参数
@@ -105,6 +106,9 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
             "is_demo": is_demo,
             "source_note": meta.get("note", ""),
             "fallback_reason": meta.get("fallback_reason", ""),
+            "snapshot_stale": snap_stale,
+            "snapshot_saved_at": meta.get("snapshot_saved_at", ""),
+            "snapshot_channel": meta.get("snapshot_channel", ""),
             "trigger": reason,
             "elapsed_sec": 0,
             "stats": stats,
@@ -125,7 +129,12 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
             "push": None,
         }
 
-        if do_push:
+        if do_push and snap_stale:
+            # 滞后快照会构造出错误的「当日 K 线」，宁可不推也不能推误导信号
+            log.warning("快照滞后，跳过企业微信推送")
+            result["push"] = {"channel": "skipped", "ok": False,
+                              "detail": "快照滞后，已跳过推送避免误导"}
+        elif do_push:
             _set(progress="推送企业微信")
             try:
                 result["push"] = notify(result)
