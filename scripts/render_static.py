@@ -521,10 +521,10 @@ def load_price_map(d: dict) -> tuple[dict, str, bool]:
         if len(code) == 6 and code.isdigit() and price > 0:
             out[code] = [round(price, 2), str(x.get("name", "") or ""),
                          round(num(x.get("pct_chg")), 2)]
-    stale = False
+    stale = bool(d.get("snapshot_stale"))
     if ts > 0:
         dt = datetime.fromtimestamp(ts, CN_TZ)
-        stale = (datetime.now(CN_TZ) - dt).days > 3
+        stale = stale or (datetime.now(CN_TZ) - dt).days > 3
         default_date = dt.strftime("%Y-%m-%d %H:%M")
     else:
         default_date = ""
@@ -564,8 +564,13 @@ def render(d: dict) -> str:
     top_n = pr.get("top_n", 10)
 
     demo_tag = '<span class="tag">演示数据</span>' if d.get("is_demo") else ""
+    stale = bool(d.get("snapshot_stale"))
+    stale_saved = d.get("snapshot_saved_at", "")
+    stale_tag = '<span class="tag">快照滞后</span>' if stale else ""
     if not push:
         push_txt = '<span class="warn">本次未推送（dry-run 或尚未执行推送）</span>'
+    elif push.get("channel") == "skipped":
+        push_txt = '<span class="warn">已跳过推送 · 快照滞后</span>'
     elif push.get("ok"):
         push_txt = f'<span class="ok">已推送 · {esc(push.get("channel"))}</span>'
     else:
@@ -578,6 +583,12 @@ def render(d: dict) -> str:
 
     fallback = d.get("fallback_reason")
     fb_note = f'<br><span class="warn">注意：真实数据源失败原因 {esc(fallback)}</span>' if fallback else ""
+    stale_note = (
+        f'<br><span class="warn">数据降级：本次东财/新浪/腾讯三通道均不可用，'
+        f'价格来自 {esc(stale_saved)} 的缓存快照（非当日实时），已跳过推送；'
+        f'上方价格与信号仅供复盘，请勿据此下单。</span>'
+        if stale else ""
+    )
 
     kpis = "".join([
         kpi("全市场", st.get("universe_total", 0), "只"),
@@ -627,7 +638,7 @@ def render(d: dict) -> str:
 <link rel="icon" href="data:,">
 <style>{CSS}</style></head><body><div class="wrap">
 <header>
-  <h1>布林下轨反转选股 · 扫描结果{demo_tag}</h1>
+  <h1>布林下轨反转选股 · 扫描结果{demo_tag}{stale_tag}</h1>
   <div class="sub">{esc(cron)} 自动扫描 · 连续跌破布林下轨后阳线收复 · 按历史胜率排序</div>
 </header>
 <section class="kpis">{kpis}</section>
@@ -635,6 +646,7 @@ def render(d: dict) -> str:
   <div><b>扫描时间</b>{esc(d.get('scan_time', '-'))}</div>
   <div><b>交易日</b>{esc(d.get('market_date', '-'))}</div>
   <div><b>数据源</b>{esc(d.get('source', '-'))}</div>
+  <div><b>快照通道</b>{esc(d.get('snapshot_channel') or '-')}</div>
   <div><b>推送</b>{push_txt}</div>
   <div><b>耗时</b>{esc(d.get('elapsed_sec', '-'))} s</div>
 </section>
@@ -644,7 +656,7 @@ def render(d: dict) -> str:
   区间跌幅 ≥<code>{esc(dec)}%</code>；扫描时点用盘中价构造当日 K 线，要求<strong>收阳、涨幅 ≥{esc(ymin)}%、收盘重新站上下轨</strong>。<br>
   股票池剔除科创板 / 北交所 / ST / 退市 / 停牌 / 成交额过低 / 上市不足 60 日。<br>
   历史胜率：同类信号后持有 <code>{esc(hold)}</code> 个交易日收益 &gt; 0 记为获胜，回看 3 年，
-  贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。{fb_note}
+  贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。{fb_note}{stale_note}
 </section>
 {table}
 {PERSONAL_HTML}
