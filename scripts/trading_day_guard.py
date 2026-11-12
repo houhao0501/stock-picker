@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""判断今天（北京时间）是否为 A 股交易日，供 GitHub Actions 跳过周末与节假日。
+"""控制 GitHub Actions 是否真正执行扫描。
 
-cron 只能排除周末，法定节假日必须由本脚本判断：
-  1. 优先用 AkShare 的交易所交易日历（tool_trade_date_hist_sina）；
-  2. 拉取失败时降级为「工作日 + data/holidays.txt 休市日兜底表」。
+当前系统为「按需手动筛选」模式：
+  - schedule（定时）触发  -> trading=false，整条 job 全部跳过，不拉行情、
+    不生成网页、不提交、不推送。彻底避免自动任务覆盖线上结果。
+  - workflow_dispatch（手动）触发 -> trading=true，任何日期都放行，
+    空仓想找票时随时可跑（非交易日拿到的是最近收盘快照）。
+  - 本地运行 -> 保留原「A 股交易日历」判断，便于命令行单独使用。
 
 结果写入 $GITHUB_OUTPUT：trading=true/false、date、basis。
 """
@@ -47,15 +50,26 @@ def _local_holidays() -> set[str]:
 def main() -> int:
     day = _today()
     ds = day.isoformat()
-    cal = _calendar_days()
-    if cal is not None:
-        trading = ds in cal
-        basis = "A 股交易所日历（AkShare）"
-    else:
-        trading = day.weekday() < 5 and ds not in _local_holidays()
-        basis = "工作日近似（日历不可用，请在 data/holidays.txt 维护休市日）"
+    event = os.getenv("GITHUB_EVENT_NAME", "")
 
-    print(f"日期={ds} 星期={day.weekday() + 1} 交易日={trading} 判定依据={basis}")
+    if event == "schedule":
+        # 手动模式：忽略一切定时触发，让下游所有步骤（含生成/提交/告警）全部跳过
+        trading = False
+        basis = "按需手动模式：忽略定时触发（schedule），未执行扫描"
+    elif event == "workflow_dispatch":
+        # 手动触发：不受交易日限制，随时可跑
+        trading = True
+        basis = "手动触发（workflow_dispatch），任何日期均放行"
+    else:
+        cal = _calendar_days()
+        if cal is not None:
+            trading = ds in cal
+            basis = "A 股交易所日历（AkShare）"
+        else:
+            trading = day.weekday() < 5 and ds not in _local_holidays()
+            basis = "工作日近似（日历不可用，请在 data/holidays.txt 维护休市日）"
+
+    print(f"日期={ds} 星期={day.weekday() + 1} 事件={event or '本地'} 放行={trading} 判定依据={basis}")
     payload = f"trading={'true' if trading else 'false'}\ndate={ds}\nbasis={basis}\n"
     out = os.getenv("GITHUB_OUTPUT")
     if out:
@@ -65,7 +79,7 @@ def main() -> int:
         print("（本地运行，未写入 GITHUB_OUTPUT）\n" + payload)
 
     if not trading:
-        print("::notice::非交易日，跳过扫描与推送")
+        print("::notice::非交易日或定时触发，跳过扫描与推送")
     return 0
 
 
