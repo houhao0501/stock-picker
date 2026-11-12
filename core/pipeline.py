@@ -94,7 +94,7 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
         _set(progress="扫描全市场形态")
 
         params = None  # 使用 config 中的默认参数
-        candidates, stats = scan(snap, histories, meta, params)
+        candidates, stats, watchlist = scan(snap, histories, meta, params)
         _set(progress="计算历史胜率")
         ranked, bt_summary = enrich(candidates, histories, params)
 
@@ -114,6 +114,7 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
             "stats": stats,
             "backtest_summary": bt_summary,
             "results": ranked,
+            "watchlist": watchlist,
             "params": {
                 "boll_window": config.BOLL_WINDOW,
                 "boll_std_mult": config.BOLL_STD_MULT,
