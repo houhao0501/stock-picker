@@ -11,9 +11,15 @@
 支持：akshare（默认）、tushare、baostock、demo。
 真实源均带本地 CSV 缓存与增量更新：首次全市场较慢，之后每天只补最近数据。
 
-akshare 源内置双通道：优先东方财富 push2，若全市场快照探测失败（部分机房 IP
-被长期断连）则本次扫描整体自动切换新浪行情。策略、参数、结果口径均不变，
-仅按通道隔离历史缓存目录，避免东财（成交量=手）与新浪（成交量=股）混用。
+akshare 源内置多级快照兜底：东方财富 push2 → 新浪分页 → 腾讯批量 → 上次成功快照。
+东财 push2 在部分机房 IP 段会被长期断连；新浪 ak.stock_zh_a_spot() 内部循环
+60+ 页却共用一个 60 秒超时，任意一页抖动就会整轮 ReadTimeout。因此这里改为
+自行分页、逐页短超时独立重试，并补上腾讯批量通道与跨运行缓存降级。
+策略、参数、结果口径均不变，仅按通道隔离历史缓存目录，避免东财（成交量=手）
+与新浪（成交量=股）混用。
+
+快照缓存写入 data/cache/spot_last.json —— GitHub Actions 只持久化 data/cache，
+写在这里才能跨运行复用；降级时页面会明确标注「快照滞后」。
 """
 from __future__ import annotations
 
@@ -29,7 +35,7 @@ from pathlib import Path
 import pandas as pd
 
 import config
-from core.utils import atomic_write_json, load_trade_calendar, read_json, today_cn
+from core.utils import atomic_write_json, load_trade_calendar, now_cn, read_json, today_cn
 
 log = logging.getLogger(__name__)
 
@@ -254,19 +260,213 @@ def _sina_symbol(code: str) -> str:
     return "sz" + code
 
 
+# ---------------------------------------------------------------- 快照兜底
+SINA_NODE_URL = (
+    "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "Market_Center.getHQNodeData"
+)
+TENCENT_QUOTE_URL = "http://qt.gtimg.cn/q="
+_HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://finance.sina.com.cn",
+}
+SPOT_PAGE_SIZE = 80          # 新浪单页条数
+SPOT_PAGE_TIMEOUT = 8        # 单页/单批超时(秒)，替代原来整轮 60 秒
+SPOT_PAGE_RETRY = 3          # 单页/单批重试次数
+SPOT_MIN_ROWS = 3000         # 少于此数视为该通道失败
+TENCENT_BATCH = 60           # 腾讯单次批量查询只数
+
+
+def _snap_last_path() -> Path:
+    """跨运行快照缓存。必须位于 data/cache —— Actions 只持久化这个目录。"""
+    return config.CACHE_DIR / "spot_last.json"
+
+
+def _normalize_snap(df: pd.DataFrame) -> pd.DataFrame:
+    """统一快照列、类型、代码格式；缺列补 0。"""
+    df = df.copy()
+    for c in SNAP_COLS:
+        if c not in df.columns:
+            df[c] = 0.0
+    df = df[SNAP_COLS].copy()
+    df["code"] = df["code"].astype(str).map(_clean_sina_code)
+    df["name"] = df["name"].astype(str)
+    for c in SNAP_COLS[2:]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.drop_duplicates(subset=["code"], keep="last").reset_index(drop=True)
+
+
+def _read_last_snap() -> tuple[pd.DataFrame, dict] | None:
+    c = read_json(_snap_last_path())
+    if not c or not c.get("rows"):
+        return None
+    try:
+        return _normalize_snap(pd.DataFrame(c["rows"])), c
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _save_last_snap(df: pd.DataFrame, channel: str) -> None:
+    try:
+        atomic_write_json(_snap_last_path(), {
+            "ts": time.time(),
+            "now": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+            "channel": channel,
+            "rows": df.to_dict("records"),
+        })
+    except Exception as exc:  # noqa: BLE001
+        log.warning("快照缓存写入失败（降级能力可能失效）: %s", exc)
+
+
+def _sina_pages() -> pd.DataFrame:
+    """新浪全市场快照：分页拉取，逐页短超时 + 独立重试。
+
+    不用 ak.stock_zh_a_spot()：它内部循环 60+ 页且共用 60 秒超时，
+    任意一页抖动会让整轮 ReadTimeout（线上 #11 的失败原因）。
+    坏页只跳过、不拖垮整轮；只要总量够就继续用。
+    """
+    import requests
+
+    sess = requests.Session()
+    out: list[dict] = []
+    failed = 0
+    for page in range(1, 200):
+        raw = None
+        for attempt in range(SPOT_PAGE_RETRY):
+            try:
+                r = sess.get(SINA_NODE_URL, params={
+                    "page": page, "num": SPOT_PAGE_SIZE, "sort": "symbol",
+                    "asc": 1, "node": "hs_a",
+                }, headers=_HTTP_HEADERS, timeout=SPOT_PAGE_TIMEOUT)
+                r.raise_for_status()
+                raw = r.json()
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt == SPOT_PAGE_RETRY - 1:
+                    failed += 1
+                    log.warning("新浪快照第 %d 页失败，跳过: %s", page, str(exc)[:90])
+                else:
+                    time.sleep(0.4 * (attempt + 1))
+        if raw is None:
+            continue
+        if not isinstance(raw, list) or len(raw) == 0:
+            break
+        for it in raw:
+            out.append({
+                "code": it.get("code"), "name": it.get("name"),
+                "price": it.get("trade"), "open": it.get("open"),
+                "high": it.get("high"), "low": it.get("low"),
+                "pre_close": it.get("settlement"), "pct_chg": it.get("changepercent"),
+                "amount": it.get("amount"), "volume": it.get("volume"),
+                "turnover": it.get("turnoverratio"), "market_cap": 0.0,
+            })
+        if len(raw) < SPOT_PAGE_SIZE:
+            break
+    if failed:
+        log.warning("新浪快照共 %d 页拉取失败（已跳过）", failed)
+    df = _normalize_snap(pd.DataFrame(out))
+    if len(df) < SPOT_MIN_ROWS:
+        raise RuntimeError(f"新浪分页仅取得 {len(df)} 只，视为通道失败")
+    return df
+
+
+def _tencent_symbol(code: str) -> str:
+    if code.startswith("920") or code.startswith(("8", "4")):
+        return "bj" + code
+    if code.startswith(("6", "9")):
+        return "sh" + code
+    return "sz" + code
+
+
+def _tencent_snap(codes: list[str]) -> pd.DataFrame:
+    """腾讯批量行情第三通道：股票列表来自上次成功快照 / 代码表。"""
+    import requests
+
+    sess = requests.Session()
+    out: list[dict] = []
+    for i in range(0, len(codes), TENCENT_BATCH):
+        batch = codes[i:i + TENCENT_BATCH]
+        url = TENCENT_QUOTE_URL + ",".join(_tencent_symbol(c) for c in batch)
+        txt = ""
+        for attempt in range(SPOT_PAGE_RETRY):
+            try:
+                r = sess.get(url, headers=_HTTP_HEADERS, timeout=SPOT_PAGE_TIMEOUT)
+                r.raise_for_status()
+                txt = r.content.decode("gbk", "replace")
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt == SPOT_PAGE_RETRY - 1:
+                    log.warning("腾讯行情第 %d 批失败，跳过: %s",
+                                i // TENCENT_BATCH + 1, str(exc)[:80])
+                else:
+                    time.sleep(0.4 * (attempt + 1))
+        for line in txt.split(";"):
+            if '="' not in line:
+                continue
+            f = line.split('="', 1)[1].rstrip('"').split("~")
+            if len(f) < 39:
+                continue
+            try:
+                out.append({
+                    "code": f[2], "name": f[1],
+                    "price": f[3], "open": f[5], "high": f[33], "low": f[34],
+                    "pre_close": f[4], "pct_chg": f[32],
+                    "volume": float(f[6]) * 100,       # 手 → 股
+                    "amount": float(f[37]) * 10000,    # 万元 → 元
+                    "turnover": f[38], "market_cap": 0.0,
+                })
+            except (ValueError, IndexError):
+                continue
+    df = _normalize_snap(pd.DataFrame(out))
+    # 代码表本身不完整时按比例判定，避免「请求 597 只、全回来了」被误判为失败
+    need = min(SPOT_MIN_ROWS, max(100, int(len(codes) * 0.8)))
+    if len(df) < need:
+        raise RuntimeError(f"腾讯通道仅取得 {len(df)}/{len(codes)} 只（需 {need}），视为通道失败")
+    return df
+
+
+def _fallback_codes(last: tuple | None) -> list[str]:
+    """腾讯通道需要的代码表，三级来源保证冷启动也可用。
+
+    1) 上次成功快照；2) 历史日线缓存的 CSV 文件名（Actions 会持久化 data/cache）；
+    3) AkShare 代码表（东财，可能同样断连，仅作最后尝试）。
+    """
+    if last is not None:
+        return [str(c).zfill(6) for c in last[0]["code"].astype(str).tolist() if c]
+    cached: set[str] = set()
+    for sub in ("sina", "akshare"):
+        d = config.CACHE_DIR / sub
+        if d.is_dir():
+            cached.update(p.stem for p in d.glob("*.csv") if p.stem.isdigit())
+    if len(cached) >= SPOT_MIN_ROWS:
+        log.info("腾讯通道代码表来自历史日线缓存：%d 只", len(cached))
+        return sorted(cached)
+    try:
+        import akshare as ak
+
+        info = ak.stock_info_a_code_name()
+        return [str(x).zfill(6) for x in info["code"].astype(str).tolist()]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("无法获取股票代码表，腾讯通道不可用: %s", str(exc)[:100])
+        return sorted(cached)
+
+
 # ---------------------------------------------------------------- AkShare
 class AkShareSource(BaseSource):
-    """东方财富通道，快照探测失败时整体自动切换新浪通道。
+    """快照四级兜底：东财 → 新浪分页 → 腾讯批量 → 上次成功快照（标注滞后）。
 
-    东财 push2 整族域名在部分机房 IP 段会被长期断连。这里只在「全市场快照」
-    这一步做一次探测：一旦失败就把本次扫描整体切到新浪，后续所有历史请求
-    直接走新浪，避免每只股票重复撞东财。输出仍统一为 SNAP_COLS / HIST_COLS，
-    source 仍标记为 akshare（前端演示数据判定依赖它），仅额外记录 channel。
+    _channel 只决定「历史日线」走哪个通道（eastmoney / sina），与快照通道解耦：
+    腾讯只提供快照，历史日线仍走新浪，避免缓存单位混用。
+    输出仍统一为 SNAP_COLS / HIST_COLS，source 仍标记为 akshare
+    （前端演示数据判定依赖它），仅额外记录 channel / snapshot_*。
     """
     name = "akshare"
 
     def __init__(self):
-        self._channel = "eastmoney"   # "eastmoney" | "sina"
+        self._channel = "eastmoney"   # 历史日线通道："eastmoney" | "sina"
+        self._snap_channel = ""       # 本次快照实际通道
+        self._snap_stale = False      # 是否降级复用了旧快照
+        self._snap_saved_at = ""      # 旧快照的保存时刻
 
     def _cache_dir(self) -> Path:
         # 通道隔离：新浪用独立缓存目录，避免与东财前复权/成交量单位混用
@@ -276,17 +476,54 @@ class AkShareSource(BaseSource):
         return d
 
     def _spot(self) -> pd.DataFrame:
-        """先探东财，失败则整体切新浪；只浪费一次请求，不做重试（避免延长限流）。"""
-        try:
-            df = self._spot_em()
-            self._channel = "eastmoney"
+        """四级兜底取全市场快照，任一通道成功即写入跨运行缓存。
+
+        设计目标：绝不让单点网络抖动导致整轮扫描失败、页面停更、推失败告警。
+        每个通道自身带重试；全部失败才复用上次成功快照并标记「快照滞后」。
+        """
+        last = _read_last_snap()
+        for label, fn, hist_channel in (
+            ("eastmoney", self._spot_em, "eastmoney"),
+            ("sina", self._spot_sina, "sina"),
+        ):
+            try:
+                df = fn()
+                if df is None or len(df) < SPOT_MIN_ROWS:
+                    raise RuntimeError(f"{label} 快照仅 {0 if df is None else len(df)} 只")
+                self._channel = hist_channel
+                self._snap_channel = label
+                self._snap_stale = False
+                _save_last_snap(df, label)
+                log.info("全市场快照通道=%s，%d 只", label, len(df))
+                return df
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s 快照不可用，继续下一通道: %s", label, str(exc)[:150])
+
+        # 第三通道：腾讯批量（代码表来自上次成功快照 / AkShare 代码表）
+        codes = _fallback_codes(last)
+        if codes:
+            try:
+                df = _tencent_snap(codes)
+                self._channel = "sina"   # 腾讯只给快照，历史日线仍走新浪
+                self._snap_channel = "tencent"
+                self._snap_stale = False
+                _save_last_snap(df, "tencent")
+                log.info("全市场快照通道=腾讯，%d 只", len(df))
+                return df
+            except Exception as exc:  # noqa: BLE001
+                log.warning("腾讯快照不可用，降级复用缓存: %s", str(exc)[:150])
+
+        # 最后兜底：复用上次成功快照（不限时效），页面标注滞后
+        if last is not None:
+            df, c = last
+            self._channel = "eastmoney" if c.get("channel") == "eastmoney" else "sina"
+            self._snap_stale = True
+            self._snap_channel = "cached:" + str(c.get("channel", "?"))
+            self._snap_saved_at = str(c.get("now", ""))
+            log.warning("三通道均失败，降级复用 %s 的快照（%d 只），页面将标注滞后",
+                        self._snap_saved_at, len(df))
             return df
-        except Exception as exc:  # noqa: BLE001
-            log.warning("东方财富实时快照不可用，切换新浪通道: %s", str(exc)[:160])
-        df = self._spot_sina()
-        self._channel = "sina"
-        log.info("已切换新浪行情通道，全市场快照 %d 只", len(df))
-        return df
+        raise RuntimeError("东财/新浪/腾讯三通道均失败，且无可复用的历史快照")
 
     def _spot_em(self) -> pd.DataFrame:
         import akshare as ak
@@ -316,31 +553,14 @@ class AkShareSource(BaseSource):
         return df
 
     def _spot_sina(self) -> pd.DataFrame:
-        import akshare as ak
-
-        # 复用已被 .gitignore 忽略的文件名，靠 channel 标记与东财缓存隔离
+        # 同一轮内的短缓存（跨运行缓存由 _save_last_snap 负责）
         cache_file = config.DATA_DIR / "spot_cache.json"
         cached = read_json(cache_file)
         if (cached and cached.get("channel") == "sina"
                 and (time.time() - cached.get("ts", 0)) < config.SPOT_CACHE_MINUTES * 60):
-            return pd.DataFrame(cached["rows"])
-        log.info("拉取全市场实时快照（新浪）...")
-        raw = ak.stock_zh_a_spot()
-        mp = {
-            "代码": "code", "名称": "name", "最新价": "price", "今开": "open", "最高": "high",
-            "最低": "low", "昨收": "pre_close", "涨跌幅": "pct_chg", "成交额": "amount",
-            "成交量": "volume",
-        }
-        df = raw.rename(columns=mp)
-        # 关键：新浪代码带 sh/sz/bj 前缀，不清洗会让科创板/北交所漏进股票池
-        df["code"] = df["code"].astype(str).map(_clean_sina_code)
-        for c in SNAP_COLS:
-            if c not in df.columns:
-                df[c] = 0.0          # 新浪快照无换手率/总市值，补 0（策略不依赖）
-        df = df[SNAP_COLS].copy()
-        for c in SNAP_COLS[2:]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.drop_duplicates(subset=["code"], keep="last").reset_index(drop=True)
+            return _normalize_snap(pd.DataFrame(cached["rows"]))
+        log.info("拉取全市场实时快照（新浪·分页逐页重试）...")
+        df = _sina_pages()
         atomic_write_json(cache_file, {"ts": time.time(), "channel": "sina",
                                        "rows": df.to_dict("records")})
         return df
@@ -431,17 +651,33 @@ class AkShareSource(BaseSource):
         log.info("AkShare 全市场 %d 只，前置粗筛后 %d 只需拉历史（通道=%s，并发 %d）",
                  len(snap), len(codes), self._channel, config.MAX_WORKERS)
         hists = self._batch_histories(codes, lambda c: self._hist_one(c, end))
-        channel_note = (
-            "实时行情来自东方财富，历史日线为前复权，已使用本地缓存增量更新"
+        snap_origin = {
+            "eastmoney": "实时快照来自东方财富",
+            "sina": "实时快照来自新浪（分页逐页重试）",
+            "tencent": "实时快照来自腾讯行情（东财/新浪均不可用，已自动切换）",
+        }.get(self._snap_channel, "实时快照来自上次缓存（非当日实时）")
+        hist_origin = (
+            "历史日线来自东方财富（前复权，本地缓存增量更新）"
             if self._channel == "eastmoney" else
-            "实时行情与历史日线来自新浪（东方财富通道不可用，已自动切换；前复权，缓存独立）"
+            "历史日线来自新浪（前复权，独立缓存目录，增量更新）"
         )
+        channel_note = f"{snap_origin}；{hist_origin}"
+        if self._snap_stale:
+            channel_note += (
+                f"；【快照滞后】三通道均不可用，复用 {self._snap_saved_at} 的缓存价，"
+                "本次价格非当日实时，结果仅供复盘、请勿据此下单"
+            )
         meta = {
             "source": "akshare", "market_date": f"{end[:4]}-{end[4:6]}-{end[6:8]}",
             "universe_total": len(snap), "preselected": after_prefilter,
             "history_loaded": len(hists), "channel": self._channel,
+            "snapshot_channel": self._snap_channel,
+            "snapshot_stale": self._snap_stale,
+            "snapshot_saved_at": self._snap_saved_at,
             "note": channel_note,
         }
+        if self._snap_stale:
+            log.warning("本次使用滞后快照，已跳过推送并在页面标注（%s）", self._snap_saved_at)
         return snap, hists, meta
 
 
