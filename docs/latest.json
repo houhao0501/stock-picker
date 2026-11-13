@@ -1,6 +1,6 @@
 {
-  "run_id": "20261113_175033",
-  "scan_time": "2026-11-13 17:53:15",
+  "run_id": "20261113_194513",
+  "scan_time": "2026-11-13 19:46:03",
   "market_date": "2026-11-13",
   "source": "akshare",
   "is_demo": false,
@@ -10,7 +10,7 @@
   "snapshot_saved_at": "",
   "snapshot_channel": "sina",
   "trigger": "manual",
-  "elapsed_sec": 162.0,
+  "elapsed_sec": 50.02,
   "stats": {
     "universe_total": 5578,
     "after_filter": 597,
@@ -54,7 +54,9 @@
     "eligible_count": 0,
     "rule": "信号出现后第 10 个交易日收盘价相对信号日收盘价 > 0 记为获胜",
     "smoothing": "贝叶斯平滑：(胜次 + 先验权重×先验胜率)/(样本数 + 先验权重)；样本不足不参与 TopN",
-    "ranking": "按平滑后历史胜率降序，同胜率依次比较平均收益、信号次数"
+    "ranking": "按平滑后历史胜率降序，同胜率依次比较平均收益、信号次数",
+    "watch_backtested": 20,
+    "watch_avg_win_rate": 0.4469
   },
   "results": [],
   "watchlist": [
@@ -1138,7 +1140,18 @@
           -0.667
         ]
       },
-      "note": "仍在线下 -0.95%（未站回下轨） · 前期连破 3 天 · 跌 -10.74% · 涨幅 0.07% 越界"
+      "note": "仍在线下 -0.95%（未站回下轨） · 前期连破 3 天 · 跌 -10.74% · 涨幅 0.07% 越界",
+      "win_rate": 0.48,
+      "win_rate_raw": 0.48,
+      "signal_count": 0,
+      "wins": 0,
+      "avg_return": 0.0,
+      "best_return": 0.0,
+      "worst_return": 0.0,
+      "sample_ok": false,
+      "score": 19.56,
+      "hold_days": 10,
+      "last_signal": null
     },
     {
       "code": "601619",
@@ -2220,7 +2233,24 @@
           -0.009
         ]
       },
-      "note": "仍在线下 -0.72%（未站回下轨） · 仅破轨 1 天 · 涨幅 0.00% 越界"
+      "note": "仍在线下 -0.72%（未站回下轨） · 仅破轨 1 天 · 涨幅 0.00% 越界",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": -4.09,
+      "best_return": -4.09,
+      "worst_return": -4.09,
+      "sample_ok": false,
+      "score": 8.65,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2024-08-26",
+        "signal_close": 2.69,
+        "exit_date": "2024-09-09",
+        "return_pct": -4.09,
+        "win": false
+      }
     },
     {
       "code": "600104",
@@ -3302,7 +3332,24 @@
           -0.14
         ]
       },
-      "note": "仍在线下 -0.20%（未站回下轨） · 仅破轨 1 天 · 涨幅 0.00% 越界"
+      "note": "仍在线下 -0.20%（未站回下轨） · 仅破轨 1 天 · 涨幅 0.00% 越界",
+      "win_rate": 0.4171,
+      "win_rate_raw": 0.3333,
+      "signal_count": 3,
+      "wins": 1,
+      "avg_return": -2.6,
+      "best_return": 0.21,
+      "worst_return": -4.17,
+      "sample_ok": true,
+      "score": 28.68,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-01-29",
+        "signal_close": 14.02,
+        "exit_date": "2026-02-12",
+        "return_pct": 0.21,
+        "win": true
+      }
     },
     {
       "code": "002304",
@@ -4384,7 +4431,24 @@
           -0.312
         ]
       },
-      "note": "贴近下轨 +0.66% · 前期未连续破轨 · 涨幅 -0.03% 越界"
+      "note": "贴近下轨 +0.66% · 前期未连续破轨 · 涨幅 -0.03% 越界",
+      "win_rate": 0.4171,
+      "win_rate_raw": 0.3333,
+      "signal_count": 3,
+      "wins": 1,
+      "avg_return": -2.0,
+      "best_return": 0.67,
+      "worst_return": -4.77,
+      "sample_ok": true,
+      "score": 29.33,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-01-05",
+        "signal_close": 59.32,
+        "exit_date": "2026-01-19",
+        "return_pct": 0.67,
+        "win": true
+      }
     },
     {
       "code": "301039",
@@ -5466,7 +5530,24 @@
           -0.04
         ]
       },
-      "note": "贴近下轨 +0.72% · 仅破轨 1 天 · 涨幅 0.15% 越界"
+      "note": "贴近下轨 +0.72% · 仅破轨 1 天 · 涨幅 0.15% 越界",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": -3.03,
+      "best_return": -3.03,
+      "worst_return": -3.03,
+      "sample_ok": false,
+      "score": 9.81,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-05-19",
+        "signal_close": 7.93,
+        "exit_date": "2026-06-02",
+        "return_pct": -3.03,
+        "win": false
+      }
     },
     {
       "code": "600585",
@@ -6548,7 +6629,24 @@
           -0.142
         ]
       },
-      "note": "贴近下轨 +0.72% · 前期未连续破轨 · 涨幅 0.06% 越界"
+      "note": "贴近下轨 +0.72% · 前期未连续破轨 · 涨幅 0.06% 越界",
+      "win_rate": 0.4867,
+      "win_rate_raw": 0.5,
+      "signal_count": 2,
+      "wins": 1,
+      "avg_return": -1.24,
+      "best_return": 0.32,
+      "worst_return": -2.79,
+      "sample_ok": true,
+      "score": 34.68,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-03-24",
+        "signal_close": 22.21,
+        "exit_date": "2026-04-08",
+        "return_pct": 0.32,
+        "win": true
+      }
     },
     {
       "code": "600461",
@@ -7630,7 +7728,24 @@
           -0.067
         ]
       },
-      "note": "贴近下轨 +0.93% · 仅破轨 1 天"
+      "note": "贴近下轨 +0.93% · 仅破轨 1 天",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": -4.2,
+      "best_return": -4.2,
+      "worst_return": -4.2,
+      "sample_ok": false,
+      "score": 8.53,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-06-09",
+        "signal_close": 9.05,
+        "exit_date": "2026-06-24",
+        "return_pct": -4.2,
+        "win": false
+      }
     },
     {
       "code": "603833",
@@ -8712,7 +8827,24 @@
           -0.481
         ]
       },
-      "note": "贴近下轨 +0.95% · 仅破轨 1 天"
+      "note": "贴近下轨 +0.95% · 仅破轨 1 天",
+      "win_rate": 0.4171,
+      "win_rate_raw": 0.3333,
+      "signal_count": 3,
+      "wins": 1,
+      "avg_return": -1.55,
+      "best_return": 11.84,
+      "worst_return": -13.4,
+      "sample_ok": true,
+      "score": 29.83,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2025-06-11",
+        "signal_close": 52.24,
+        "exit_date": "2025-06-25",
+        "return_pct": -3.08,
+        "win": false
+      }
     },
     {
       "code": "600050",
@@ -9794,7 +9926,24 @@
           -0.052
         ]
       },
-      "note": "贴近下轨 +1.03% · 仅破轨 1 天"
+      "note": "贴近下轨 +1.03% · 仅破轨 1 天",
+      "win_rate": 0.584,
+      "win_rate_raw": 1.0,
+      "signal_count": 1,
+      "wins": 1,
+      "avg_return": 4.66,
+      "best_return": 4.66,
+      "worst_return": 4.66,
+      "sample_ok": false,
+      "score": 32.67,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-07-01",
+        "signal_close": 4.08,
+        "exit_date": "2026-07-15",
+        "return_pct": 4.66,
+        "win": true
+      }
     },
     {
       "code": "601319",
@@ -10876,7 +11025,24 @@
           -0.015
         ]
       },
-      "note": "贴近下轨 +1.24% · 前期未连续破轨"
+      "note": "贴近下轨 +1.24% · 前期未连续破轨",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": 0.0,
+      "best_return": 0.0,
+      "worst_return": 0.0,
+      "sample_ok": false,
+      "score": 13.15,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-04-01",
+        "signal_close": 7.24,
+        "exit_date": "2026-04-16",
+        "return_pct": 0.0,
+        "win": false
+      }
     },
     {
       "code": "600873",
@@ -11958,7 +12124,24 @@
           -0.069
         ]
       },
-      "note": "贴近下轨 +1.34% · 仅破轨 2 天"
+      "note": "贴近下轨 +1.34% · 仅破轨 2 天",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": -0.44,
+      "best_return": -0.44,
+      "worst_return": -0.44,
+      "sample_ok": false,
+      "score": 12.66,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2025-01-06",
+        "signal_close": 9.05,
+        "exit_date": "2025-01-20",
+        "return_pct": -0.44,
+        "win": false
+      }
     },
     {
       "code": "601066",
@@ -13040,7 +13223,24 @@
           0.012
         ]
       },
-      "note": "贴近下轨 +1.43% · 前期未连续破轨"
+      "note": "贴近下轨 +1.43% · 前期未连续破轨",
+      "win_rate": 0.384,
+      "win_rate_raw": 0.0,
+      "signal_count": 1,
+      "wins": 0,
+      "avg_return": -3.44,
+      "best_return": -3.44,
+      "worst_return": -3.44,
+      "sample_ok": false,
+      "score": 9.36,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-09-16",
+        "signal_close": 23.56,
+        "exit_date": "2026-10-08",
+        "return_pct": -3.44,
+        "win": false
+      }
     },
     {
       "code": "601187",
@@ -14122,7 +14322,18 @@
           -0.018
         ]
       },
-      "note": "贴近下轨 +1.63% · 前期未连续破轨 · 涨幅 0.45% 越界"
+      "note": "贴近下轨 +1.63% · 前期未连续破轨 · 涨幅 0.45% 越界",
+      "win_rate": 0.48,
+      "win_rate_raw": 0.48,
+      "signal_count": 0,
+      "wins": 0,
+      "avg_return": 0.0,
+      "best_return": 0.0,
+      "worst_return": 0.0,
+      "sample_ok": false,
+      "score": 19.56,
+      "hold_days": 10,
+      "last_signal": null
     },
     {
       "code": "600886",
@@ -15204,7 +15415,18 @@
           -0.168
         ]
       },
-      "note": "贴近下轨 +1.68% · 前期未连续破轨 · 涨幅 0.32% 越界"
+      "note": "贴近下轨 +1.68% · 前期未连续破轨 · 涨幅 0.32% 越界",
+      "win_rate": 0.48,
+      "win_rate_raw": 0.48,
+      "signal_count": 0,
+      "wins": 0,
+      "avg_return": 0.0,
+      "best_return": 0.0,
+      "worst_return": 0.0,
+      "sample_ok": false,
+      "score": 19.56,
+      "hold_days": 10,
+      "last_signal": null
     },
     {
       "code": "601688",
@@ -16286,7 +16508,24 @@
           -0.007
         ]
       },
-      "note": "贴近下轨 +1.83% · 前期未连续破轨 · 涨幅 -0.35% 越界"
+      "note": "贴近下轨 +1.83% · 前期未连续破轨 · 涨幅 -0.35% 越界",
+      "win_rate": 0.56,
+      "win_rate_raw": 0.6667,
+      "signal_count": 3,
+      "wins": 2,
+      "avg_return": 2.82,
+      "best_return": 7.78,
+      "worst_return": -2.75,
+      "sample_ok": true,
+      "score": 44.92,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-10-23",
+        "signal_close": 17.25,
+        "exit_date": "2026-11-06",
+        "return_pct": 3.42,
+        "win": true
+      }
     },
     {
       "code": "600598",
@@ -17368,7 +17607,18 @@
           -0.135
         ]
       },
-      "note": "贴近下轨 +1.86% · 前期未连续破轨"
+      "note": "贴近下轨 +1.86% · 前期未连续破轨",
+      "win_rate": 0.48,
+      "win_rate_raw": 0.48,
+      "signal_count": 0,
+      "wins": 0,
+      "avg_return": 0.0,
+      "best_return": 0.0,
+      "worst_return": 0.0,
+      "sample_ok": false,
+      "score": 19.56,
+      "hold_days": 10,
+      "last_signal": null
     },
     {
       "code": "601615",
@@ -18450,7 +18700,24 @@
           0.027
         ]
       },
-      "note": "贴近下轨 +1.89% · 前期未连续破轨"
+      "note": "贴近下轨 +1.89% · 前期未连续破轨",
+      "win_rate": 0.2743,
+      "win_rate_raw": 0.0,
+      "signal_count": 3,
+      "wins": 0,
+      "avg_return": -4.31,
+      "best_return": -0.29,
+      "worst_return": -9.27,
+      "sample_ok": true,
+      "score": 16.51,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2025-01-09",
+        "signal_close": 10.19,
+        "exit_date": "2025-01-23",
+        "return_pct": -0.29,
+        "win": false
+      }
     },
     {
       "code": "600016",
@@ -19532,7 +19799,24 @@
           -0.015
         ]
       },
-      "note": "贴近下轨 +1.90% · 前期未连续破轨"
+      "note": "贴近下轨 +1.90% · 前期未连续破轨",
+      "win_rate": 0.584,
+      "win_rate_raw": 1.0,
+      "signal_count": 1,
+      "wins": 1,
+      "avg_return": 5.12,
+      "best_return": 5.12,
+      "worst_return": 5.12,
+      "sample_ok": false,
+      "score": 33.18,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-08-19",
+        "signal_close": 3.32,
+        "exit_date": "2026-09-02",
+        "return_pct": 5.12,
+        "win": true
+      }
     },
     {
       "code": "002626",
@@ -20614,7 +20898,24 @@
           -0.311
         ]
       },
-      "note": "贴近下轨 +1.92% · 前期未连续破轨"
+      "note": "贴近下轨 +1.92% · 前期未连续破轨",
+      "win_rate": 0.4867,
+      "win_rate_raw": 0.5,
+      "signal_count": 2,
+      "wins": 1,
+      "avg_return": -3.49,
+      "best_return": 2.8,
+      "worst_return": -9.79,
+      "sample_ok": true,
+      "score": 32.2,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2026-02-03",
+        "signal_close": 18.2,
+        "exit_date": "2026-02-25",
+        "return_pct": 2.8,
+        "win": true
+      }
     },
     {
       "code": "600780",
@@ -21696,7 +21997,24 @@
           0.003
         ]
       },
-      "note": "贴近下轨 +1.94% · 前期未连续破轨 · 涨幅 0.17% 越界"
+      "note": "贴近下轨 +1.94% · 前期未连续破轨 · 涨幅 0.17% 越界",
+      "win_rate": 0.4867,
+      "win_rate_raw": 0.5,
+      "signal_count": 2,
+      "wins": 1,
+      "avg_return": 0.12,
+      "best_return": 2.12,
+      "worst_return": -1.89,
+      "sample_ok": true,
+      "score": 36.17,
+      "hold_days": 10,
+      "last_signal": {
+        "date": "2025-01-06",
+        "signal_close": 5.28,
+        "exit_date": "2025-01-20",
+        "return_pct": -1.89,
+        "win": false
+      }
     }
   ],
   "params": {
