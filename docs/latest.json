@@ -1,6 +1,6 @@
 {
-  "run_id": "20261113_164556",
-  "scan_time": "2026-11-13 16:48:30",
+  "run_id": "20261113_175033",
+  "scan_time": "2026-11-13 17:53:15",
   "market_date": "2026-11-13",
   "source": "akshare",
   "is_demo": false,
@@ -10,7 +10,7 @@
   "snapshot_saved_at": "",
   "snapshot_channel": "sina",
   "trigger": "manual",
-  "elapsed_sec": 154.24,
+  "elapsed_sec": 162.0,
   "stats": {
     "universe_total": 5578,
     "after_filter": 597,

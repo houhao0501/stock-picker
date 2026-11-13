@@ -225,12 +225,12 @@ background:rgba(76,141,255,.15);color:var(--accent)}
 <div class="pg-box" id="pgBox"><div class="pg-head"><span class="pg-title" id="pgTitle">准备中…</span><span class="pg-meta">已用 <span id="pgElapsed">00:00</span> · <span id="pgPct">0%</span></span></div><div class="pg-track"><div class="pg-bar" id="pgBar"></div></div><div class="pg-phases" id="pgPhases"></div><div class="pg-cur" id="pgCur"></div><div class="pg-err" id="pgErr"></div><div class="pg-foot"><a href="https://github.com/houhao0501/stock-picker/actions/workflows/scan.yml" target="_blank" rel="noopener">去 GitHub 手动触发 ↗（兜底）</a><button class="btn sm" id="btnHidePg">收起进度</button></div></div></section>
 <section class="kpis"><div class="kpi"><div class="label">全市场</div><div class="value">5578<span class="unit">只</span></div></div><div class="kpi"><div class="label">过滤后</div><div class="value">597<span class="unit">只</span></div></div><div class="kpi"><div class="label">命中信号</div><div class="value">0<span class="unit">只</span></div></div><div class="kpi"><div class="label">Top10 平均胜率</div><div class="value">0.0<span class="unit">%</span></div></div></section>
 <section class="status">
-  <div><b>扫描时间</b>2026-11-13 16:48:30</div>
+  <div><b>扫描时间</b>2026-11-13 17:53:15</div>
   <div><b>交易日</b>2026-11-13</div>
   <div><b>数据源</b>akshare</div>
   <div><b>快照通道</b>sina</div>
   <div><b>结果</b><span class="ok">仅网页查看 · 不推送企业微信</span></div>
-  <div><b>耗时</b>154.24 s</div>
+  <div><b>耗时</b>162.0 s</div>
 </section>
 <section class="note">
   <h2>策略口径</h2>
@@ -300,7 +300,7 @@ background:rgba(76,141,255,.15);color:var(--accent)}
 
 <footer>
   本页由 GitHub Actions 在你手动触发后生成，结果已缓存到本机浏览器；仅供量化研究参考，不构成投资建议。市场有风险，决策需谨慎。<br>
-  页面生成时间：2026-11-13 17:32:27 · 原始数据：<a href="latest.json">latest.json</a>
+  页面生成时间：2026-11-13 17:53:15 · 原始数据：<a href="latest.json">latest.json</a>
 </footer>
 </div>
 <div id="tokModal" class="modal hidden"><div class="modal-card" style="width:min(520px,100%)"><div class="modal-head"><h3>填写 GitHub 令牌（只需一次）</h3><button id="tokCloseX" aria-label="关闭">×</button></div><div class="tok-body"><p>点「立即筛选」时，本页需要替你向 GitHub 发一次请求来启动云端扫描。请填一枚 <b>细粒度个人访问令牌（fine-grained PAT）</b>；之前配置过的那一枚可以直接复用。</p><p class="tok-note"><b>令牌只保存在你这台设备的浏览器里</b>（localStorage），不会上传到本站服务器、不会写进仓库、不会出现在任何日志中。可随时点「清除令牌」删除。建议只授权本仓库、只给 Actions 读写权限的专用令牌。</p><p>新建方式：GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token；<b>Repository access 只选 <code>houhao0501/stock-picker</code></b>，权限勾 <b>Actions: Read and Write</b>（如需读取结果可再加 Contents: Read）。</p><input type="password" id="tokInput" placeholder="粘贴 github_pat_… 或 ghp_…" autocomplete="off" spellcheck="false"><div class="tok-msg" id="tokMsg"></div><div class="buy-actions"><button class="btn" id="tokCancel">取消</button><button class="btn pri" id="tokSave">保存并立即筛选</button></div></div></div></div>
