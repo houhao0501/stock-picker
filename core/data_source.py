@@ -39,6 +39,13 @@ from core.utils import atomic_write_json, load_trade_calendar, now_cn, read_json
 
 log = logging.getLogger(__name__)
 
+# AkShare 的 stock_zh_a_daily() 每次调用都会新建一个 py_mini_racer(V8) 实例，
+# 而 V8 的 partition_address_space 是进程级单例；多线程并发首次初始化会触发
+# 原生崩溃（Check failed: !IsConfigurablePoolInitialized() → exit 133，
+# 日志里是 FATAL + Trace/breakpoint trap，Python 层无法捕获）。
+# 用进程级互斥锁把该调用串行化，配合缓存短路，既根治崩溃又不明显增加耗时。
+_SINA_V8_LOCK = threading.Lock()
+
 SNAP_COLS = [
     "code", "name", "price", "open", "high", "low", "pre_close",
     "pct_chg", "amount", "volume", "turnover", "market_cap",
@@ -72,6 +79,24 @@ def _recent_trade_day() -> str:
             return d.strftime("%Y%m%d")
         d -= timedelta(days=1)
     return today_cn().strftime("%Y%m%d")
+
+
+def _prev_trade_day(end_iso: str) -> date:
+    """返回 end_iso 之前最近的一个交易日，用于判断历史缓存是否已完整。
+
+    盘中扫描用当日快照构造 K 线，历史日线只要覆盖到前一交易日即为最新。
+    """
+    cal = load_trade_calendar()
+    d = date.fromisoformat(end_iso) - timedelta(days=1)
+    for _ in range(15):
+        ds = d.isoformat()
+        if cal is None:
+            if d.weekday() < 5 and ds not in _local_holidays():
+                return d
+        elif ds in cal:
+            return d
+        d -= timedelta(days=1)
+    return date.fromisoformat(end_iso) - timedelta(days=1)
 
 
 def _local_holidays() -> set[str]:
@@ -173,7 +198,10 @@ class BaseSource:
         out: dict[str, pd.DataFrame] = {}
         total = len(codes)
         done = 0
-        with ThreadPoolExecutor(max_workers=max(1, config.MAX_WORKERS)) as pool:
+        # 新浪通道的 AkShare 日线接口每次调用都会新建 V8 实例，必须串行；
+        # 其余通道保持 env MAX_WORKERS 并发。
+        workers = 1 if self._channel == "sina" else max(1, config.MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {pool.submit(fetch_one, c): c for c in codes}
             for fut in as_completed(futs):
                 c = futs[fut]
@@ -574,8 +602,19 @@ class AkShareSource(BaseSource):
         import akshare as ak
 
         end_iso = f"{end_yyyymmdd[:4]}-{end_yyyymmdd[4:6]}-{end_yyyymmdd[6:8]}"
+        # 缓存短路：历史日线只需覆盖到前一交易日。命中就直接复用，
+        # 既省掉一次全历史请求，也完全避开 py_mini_racer(V8)。
+        cached = self._read_cache(code)
+        min_len = config.BOLL_WINDOW + config.MIN_BREAK_DAYS + 5
+        if cached is not None and len(cached) >= min_len:
+            try:
+                last = date.fromisoformat(str(cached["date"].iloc[-1]))
+                if last >= _prev_trade_day(end_iso):
+                    return cached
+            except Exception:
+                pass
         stale = self._cache_is_stale(code, end_iso)
-        old = None if stale else self._read_cache(code)
+        old = None if stale else cached
         if old is not None and len(old):
             start_dt = date.fromisoformat(str(old["date"].iloc[-1])) - timedelta(days=12)
             start = start_dt.strftime("%Y%m%d")
@@ -587,7 +626,9 @@ class AkShareSource(BaseSource):
         for attempt in range(config.HIST_RETRY):
             try:
                 _throttle()
-                raw = ak.stock_zh_a_daily(symbol=_sina_symbol(code), adjust="qfq")
+                # V8 分区是进程级单例，并发初始化会原生崩溃；全局锁串行化。
+                with _SINA_V8_LOCK:
+                    raw = ak.stock_zh_a_daily(symbol=_sina_symbol(code), adjust="qfq")
                 break
             except Exception as exc:  # noqa: BLE001
                 if attempt == config.HIST_RETRY - 1:
@@ -648,8 +689,12 @@ class AkShareSource(BaseSource):
         after_prefilter = len(codes)
         if config.UNIVERSE_LIMIT > 0:
             codes = codes[: config.UNIVERSE_LIMIT]
+        workers = 1 if self._channel == "sina" else max(1, config.MAX_WORKERS)
         log.info("AkShare 全市场 %d 只，前置粗筛后 %d 只需拉历史（通道=%s，并发 %d）",
-                 len(snap), len(codes), self._channel, config.MAX_WORKERS)
+                 len(snap), len(codes), self._channel, workers)
+        if self._channel == "sina":
+            log.warning("历史日线走新浪通道（V8 解密）：已串行执行以避免 py_mini_racer "
+                        "并发崩溃；缓存覆盖到前一交易日的股票会直接跳过请求")
         hists = self._batch_histories(codes, lambda c: self._hist_one(c, end))
         snap_origin = {
             "eastmoney": "实时快照来自东方财富",
