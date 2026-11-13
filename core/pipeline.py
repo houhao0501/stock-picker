@@ -8,7 +8,7 @@ import traceback
 from datetime import datetime
 
 import config
-from core.backtest import enrich
+from core.backtest import enrich, evaluate
 from core.data_source import load_market
 from core.notifier import notify
 from core.strategy import scan
@@ -97,6 +97,22 @@ def run_scan(reason: str = "manual", source: str | None = None, do_push: bool = 
         candidates, stats, watchlist = scan(snap, histories, meta, params)
         _set(progress="计算历史胜率")
         ranked, bt_summary = enrich(candidates, histories, params)
+
+        # 超跌观察榜同样给出近 3 年同类信号的历史胜率。
+        # 复用本次扫描已加载的日线，纯本地计算，不额外发起行情请求、不拖慢扫描。
+        watch_rates = []
+        for w in (watchlist or []):
+            hist = histories.get(w.get("code"))
+            if hist is None or len(hist) < config.BOLL_WINDOW + config.HOLD_DAYS + 10:
+                continue
+            bt = evaluate(w, hist, params)
+            bt.pop("recent_signals", None)   # 信号明细体积大，观察榜不需要
+            w.update(bt)
+            watch_rates.append(float(w["win_rate"]))
+        bt_summary["watch_backtested"] = len(watch_rates)
+        bt_summary["watch_avg_win_rate"] = (
+            round(sum(watch_rates) / len(watch_rates), 4) if watch_rates else 0.0
+        )
 
         result = {
             "run_id": run_id,

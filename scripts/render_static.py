@@ -37,6 +37,10 @@ WATCH_KEEP = [
     "amount", "hist_len", "last_hist_date", "spark",
     "break_days", "decline_pct", "yang_pct", "gap_pct", "boll_pos", "ret5",
     "is_yang", "lower", "upper", "mid", "note",
+    # 三年历史胜率（由 core/pipeline.py 对观察榜回测后写入）
+    "win_rate", "win_rate_raw", "signal_count", "wins",
+    "avg_return", "best_return", "worst_return", "sample_ok",
+    "hold_days", "last_signal",
 ]
 
 ACTIONS_URL = "https://github.com/houhao0501/stock-picker/actions/workflows/scan.yml"
@@ -506,11 +510,23 @@ PAGE_JS = r"""
         ["布林上轨",f2(r.upper),"up"],
         ["信号判定",isWatch?"观察 · 未确认":"收阳 · 站回下轨",isWatch?"":"up"]]);
     if(isWatch){
-      $("mStats").innerHTML=quote+shape+
+      var wbt=(r.win_rate!=null)?
+        sec("三年历史胜率 · 同类信号后持有 "+(r.hold_days||10)+" 个交易日",[
+          ["平滑胜率",((r.win_rate||0)*100).toFixed(1)+"%","up"],
+          ["原始胜率",((r.win_rate_raw||0)*100).toFixed(1)+"%",""],
+          ["信号 / 胜次",r.signal_count+" / "+r.wins,""],
+          ["平均收益",(Number(r.avg_return)>=0?"+":"")+f2(r.avg_return)+"%",cls(r.avg_return)],
+          ["最好收益",(Number(r.best_return)>=0?"+":"")+f2(r.best_return)+"%","up"],
+          ["最差收益",(Number(r.worst_return)>=0?"+":"")+f2(r.worst_return)+"%","down"],
+          ["样本充足",r.sample_ok?"是":"否（仅供参考）",r.sample_ok?"up":"down"]]):
+        '<div class="stat-sec"><h4>三年历史胜率</h4><div class="wdesc" style="font-size:13px">'
+        +'本次结果尚未包含观察榜胜率，下次点「立即筛选」后自动显示。</div></div>';
+      $("mStats").innerHTML=quote+shape+wbt+
         '<div class="stat-sec"><h4>离确认信号还差在哪</h4>'+
         '<div class="wdesc" style="font-size:13px;line-height:1.9">'+esc(r.note)+
         '<br><span class="muted">该股尚未满足「连跌破轨后收阳站回下轨」的完整条件，'+
-        '因此不进入 Top10 推送，也没有历史胜率回测。是否介入由你本人判断。</span></div></div>';
+        '因此不进入 Top10 推送。上方胜率统计的是它历史上出现同类完整信号后的表现，'+
+        '不代表当前这次观察信号，是否介入由你本人判断。</span></div></div>';
     }else{
       $("mStats").innerHTML=quote+shape+
         sec("历史胜率 · 持有 "+(r.hold_days||10)+" 个交易日",[
@@ -1119,11 +1135,26 @@ def render(d: dict) -> str:
         if stale else ""
     )
 
+    # 第 4 个 KPI：有命中看 TopN 平均胜率；0 命中时改看观察榜 3 年平均胜率，
+    # 避免长期显示 0.0% 让人误以为没做回测。旧结果无该字段时降级显示「—」。
+    watch_rows = d.get("watchlist") or []
+    # 只统计样本充足（近 3 年至少 2 次同类信号）的票，避免先验胜率污染均值
+    w_wrs = [num(x.get("win_rate")) for x in watch_rows
+             if x.get("win_rate") is not None and x.get("sample_ok")]
+    if rows:
+        wr_label, wr_val, wr_unit = f"Top{top_n} 3年胜率", f"{avg_wr:.1f}", "%"
+    elif w_wrs:
+        wr_label = "观察榜 3年胜率"
+        wr_val = f"{sum(w_wrs) / len(w_wrs) * 100:.1f}"
+        wr_unit = "%"
+    else:
+        wr_label, wr_val, wr_unit = "观察榜 3年胜率", "—", ""
+
     kpis = "".join([
         kpi("全市场", st.get("universe_total", 0), "只"),
         kpi("过滤后", st.get("after_filter", 0), "只"),
         kpi("命中信号", st.get("signals", 0), "只"),
-        kpi(f"Top{top_n} 平均胜率", f"{avg_wr:.1f}", "%"),
+        kpi(wr_label, wr_val, wr_unit),
     ])
 
     if rows:
@@ -1158,7 +1189,8 @@ def render(d: dict) -> str:
         )
     else:
         table = ('<div class="empty">本次没有严格确认「连跌破下轨 → 收阳站回」的信号。'
-                 '可直接看下方<b>超跌观察榜</b>人工挑选，或点上方「立即筛选」重新跑一次。</div>')
+                 '可直接看下方<b>超跌观察榜</b>人工挑选（已附每只票近 3 年历史胜率），'
+                 '或点上方「立即筛选」重新跑一次。</div>')
 
     # ---- 超跌观察榜：服务端静态渲染，打开即有，不依赖 JS / 不受网络影响 ----
     wl = d.get("watchlist", [])
@@ -1169,6 +1201,21 @@ def render(d: dict) -> str:
             gap_cls = "gap-neg" if gap < 0 else "gap-pos"
             brk = int(num(x.get("break_days")))
             near = ' <span class="wtag near">近信号</span>' if brk >= 2 else ""
+            # 三年历史胜率；旧结果没有该字段时降级为「—」
+            wr = x.get("win_rate")
+            sc = int(num(x.get("signal_count")))
+            if wr is None:
+                wr_cells = '<td class="mono muted">—</td><td class="mono muted">—</td>'
+            elif sc == 0:
+                # 近三年从未出现过同类完整信号：先验值不是实测胜率，不伪装成数字
+                wr_cells = ('<td class="mono muted" title="近 3 年无同类完整信号">—'
+                            '<br><span class="muted" style="font-size:11px">无历史信号</span></td>'
+                            '<td class="mono muted">0/0</td>')
+            else:
+                few = '' if x.get("sample_ok", True) else '<br><span class="muted" style="font-size:11px">样本少</span>'
+                sig = f'{sc}/{int(num(x.get("wins")))}'
+                wr_cells = (f'<td class="mono strong">{num(wr) * 100:.1f}%{few}</td>'
+                            f'<td class="mono">{sig}</td>')
             wtrs.append(
                 f'<tr data-code="{esc(x.get("code"))}"><td>{i}</td>'
                 f'<td class="mono">{esc(x.get("code"))}</td>'
@@ -1179,6 +1226,7 @@ def render(d: dict) -> str:
                 f'<td class="mono">{brk}</td>'
                 f'<td class="mono down">{num(x.get("decline_pct")):.2f}%</td>'
                 f'<td class="mono">{num(x.get("ret5")):+.2f}%</td>'
+                f'{wr_cells}'
                 f'<td class="muted" style="text-align:left">{esc(x.get("note"))}</td>'
                 f'<td><div class="rowbtns">'
                 f'<button class="btn sm" data-act="watch" data-code="{esc(x.get("code"))}">+ 候选</button>'
@@ -1189,10 +1237,13 @@ def render(d: dict) -> str:
             '<section class="watch-sec"><h2>超跌观察榜 <span class="tag">人工挑选</span></h2>'
             '<p class="wdesc">按「距布林下轨」由近到远排序，列出贴近或跌破下轨、但尚未确认反转的股票。'
             '这是空仓时人工找票用的观察池，<b>不是买入信号</b>；「说明」列写明它离确认信号还差在哪。'
-            '点任意一行看同花顺式日 K，点「+候选」加入下方个人观察台跟踪后续走势。</p>'
+            '点任意一行看同花顺式日 K，点「+候选」加入下方个人观察台跟踪后续走势。<br>'
+            '<b>「3年胜率」</b>是这只票历史上出现同类完整信号后持有 10 个交易日的胜率（贝叶斯平滑），'
+            '<b>不是当前这次观察信号的胜率</b>；样本偏少会标注，仅供参考。</p>'
             '<div class="scroll"><table id="wtbl"><thead><tr>'
             '<th>#</th><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th>'
-            '<th>距下轨</th><th>连破天数</th><th>区间跌幅</th><th>近5日</th><th>说明</th><th>操作</th>'
+            '<th>距下轨</th><th>连破天数</th><th>区间跌幅</th><th>近5日</th>'
+            '<th>3年胜率</th><th>信号/胜次</th><th>说明</th><th>操作</th>'
             '</tr></thead><tbody>' + "".join(wtrs) + '</tbody></table></div></section>'
         )
     else:
@@ -1242,7 +1293,9 @@ def render(d: dict) -> str:
   区间跌幅 ≥<code>{esc(dec)}%</code>；扫描时点用盘中价构造当日 K 线，要求<strong>收阳、涨幅 ≥{esc(ymin)}%、收盘重新站上下轨</strong>。<br>
   股票池剔除科创板 / 北交所 / ST / 退市 / 停牌 / 成交额过低 / 上市不足 60 日。<br>
   历史胜率：同类信号后持有 <code>{esc(hold)}</code> 个交易日收益 &gt; 0 记为获胜，回看 3 年，
-  贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。{fb_note}{stale_note}
+  贝叶斯平滑后降序取 Top {esc(top_n)}（样本不足者不参与推送）。超跌观察榜同样给出每只票近 3 年
+  同类信号的历史胜率，便于人工挑选时参考；该口径统计的是历史完整信号，不是当前观察信号。
+  近 3 年不足 2 次信号的标注「样本少」，一次都没有的显示「无历史信号」（不把先验胜率当实测值）。{fb_note}{stale_note}
 </section>
 {table}
 {watch_table}
